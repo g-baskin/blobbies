@@ -61,6 +61,12 @@ image = { version = "0.25.10", default-features = false, features = [
     "bmp",
 ] }
 
+[dev-dependencies]
+# Match `tauri-plugin-http`'s production scope parser in capability tests.
+regex = "1.12.2"
+url = "2.5.8"
+urlpattern = "0.3.0"
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_debug_implementations = "warn"

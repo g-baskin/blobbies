@@ -30,6 +30,11 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // App suites mount the whole UI and exhaust this Intel host when Vitest
+    // runs files in parallel; individual 5s behavior tests then time out even
+    // though they pass alone. Serialize files, as the live sim config already
+    // does, so the gate measures behavior rather than CPU contention.
+    fileParallelism: false,
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
       provider: "v8",

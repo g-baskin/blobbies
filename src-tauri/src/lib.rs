@@ -8,6 +8,8 @@ mod shell;
 mod skills;
 mod store;
 
+#[cfg(test)]
+mod capability_tests;
 pub use error::Error;
 
 /// Build and run the Tauri application.
