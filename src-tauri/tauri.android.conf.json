@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "externalBin": [],
+    "createUpdaterArtifacts": false
+  },
+  "plugins": { "updater": null }
+}

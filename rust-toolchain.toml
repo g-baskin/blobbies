@@ -1,4 +1,8 @@
 [toolchain]
 channel = "1.90.0"
 components = ["rustfmt", "clippy", "rust-analyzer"]
+# Android std for the phone build (`pnpm android:build`): x86_64 for the
+# emulator, aarch64 for real phones. Fetched per-project by rustup, no global
+# install.
+targets = ["aarch64-linux-android", "x86_64-linux-android"]
 profile = "minimal"

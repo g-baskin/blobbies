@@ -29,6 +29,14 @@ import { gzipSync } from "node:zlib";
  *  SDK leak costs, which is what this gate is for. */
 const STARTUP_GZIP_BUDGET_KB = 200;
 
+// Debug Tauri builds (`tauri build --debug`, `pnpm android:build`) skip
+// minification on purpose (vite.config.ts), so their size says nothing about
+// the shipped chunk. The gate applies to minified builds only.
+if (process.env.TAURI_ENV_DEBUG) {
+  console.log("bundle-budget: skipped for an unminified debug build");
+  process.exit(0);
+}
+
 const assetsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "assets");
 const startup = readdirSync(assetsDir).filter((file) => /^index-[^/]+\.js$/.test(file));
 

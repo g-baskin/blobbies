@@ -20,9 +20,9 @@
  */
 import type { AgentTool } from "@kenkaiiii/gg-agent";
 import { z } from "zod";
+import { canCapture } from "@/lib/capture-support";
 import { modelSeesImages } from "@/lib/model-vision";
 import { ocrImage } from "@/lib/ocr";
-import { isTauri } from "@/lib/tauri";
 import { wrapUntrusted } from "@/lib/untrusted";
 
 /** One window offered to the model for discovery. */
@@ -52,9 +52,7 @@ export interface Capture {
  * a model about a tool it cannot call is the misfire the prompt's tool list
  * exists to avoid, so the same answer gates both the catalog and the prompt.
  */
-export function canCapture(): boolean {
-  return isTauri() && !navigator.userAgent.includes("Linux");
-}
+export { canCapture };
 
 /** How much OCR text one capture may return to a text-only model. */
 const OCR_LIMIT = 6_000;

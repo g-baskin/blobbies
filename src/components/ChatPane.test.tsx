@@ -13,6 +13,15 @@ vi.mock("@/lib/tauri", async (importOriginal) => ({
   revealFile: (path: string) => revealFile(path),
 }));
 
+/**
+ * The lazy assistant pieces (approvals, mic, voice mode) are not under test
+ * here; loading the real modules resolves their Suspense boundaries late and
+ * re-renders the composer mid-test, which made several tests slow.
+ */
+vi.mock("@/components/assistant/ApprovalCards", () => ({ ApprovalCards: () => null }));
+vi.mock("@/components/assistant/MicButton", () => ({ MicButton: () => null }));
+vi.mock("@/components/assistant/VoiceMode", () => ({ VoiceMode: () => null }));
+
 const agent: Agent = {
   id: "61ec34f1-9ba5-4eff-b8e1-7acefb2148ea",
   name: "Ken",

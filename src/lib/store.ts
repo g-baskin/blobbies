@@ -14,7 +14,7 @@ import { isTauri } from "@/lib/tauri";
  * under the same keys, so behavior is identical without Tauri.
  */
 
-export type BlobSliceName = "config" | "routines" | "transcript" | "runs" | "recap";
+export type BlobSliceName = "config" | "routines" | "transcript" | "runs" | "recap" | "activity";
 
 export interface Settings {
   userName: string;
@@ -523,6 +523,15 @@ export function saveBlobTranscript(id: string, messages: Message[]): void {
   saveTranscript(`blobs/${id}`, messages);
 }
 
+/** The Blob's tool-call audit trail (see lib/activity-log); raw rows, validated there. */
+export async function loadBlobActivity(id: string): Promise<unknown> {
+  return await rawRead(`blobs/${id}/activity`);
+}
+
+export function saveBlobActivity(id: string, entries: unknown[]): void {
+  queueWrite(`blobs/${id}/activity`, entries);
+}
+
 export function saveBlobConfig(id: string, config: Agent): void {
   queueWrite(`blobs/${id}/config`, config);
 }
@@ -620,7 +629,7 @@ export async function deleteBlobData(id: string): Promise<void> {
     await invoke("store_delete_blob", { id });
     return;
   }
-  for (const slice of ["config", "routines", "transcript", "runs", "recap"]) {
+  for (const slice of ["config", "routines", "transcript", "runs", "recap", "activity"]) {
     backendRemove(`slice:blobs/${id}/${slice}`);
   }
 }

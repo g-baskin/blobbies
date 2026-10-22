@@ -1,6 +1,9 @@
 import {
   ArrowDown,
   ArrowUp,
+  AudioLines,
+  Camera,
+  ChevronLeft,
   CornerUpRight,
   Ellipsis,
   FileText,
@@ -17,7 +20,9 @@ import {
   type FormEvent,
   Fragment,
   type KeyboardEvent,
+  lazy,
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -26,6 +31,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { AnimatedBlob } from "@/components/assistant/AnimatedBlob";
+import { useReadAloud } from "@/components/assistant/useReadAloud";
 import { BlobAvatar } from "@/components/BlobAvatar";
 import { messageCard } from "@/components/cards/registry";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -35,6 +42,7 @@ import { type Agent, MAX_BLOB_NAME_LENGTH, type Message } from "@/data/agents";
 import { type Attachment, MAX_ATTACHMENTS, type PickedFile } from "@/lib/attachments";
 import { fileBadge, fileKind } from "@/lib/file-kind";
 import { mentionPalette } from "@/lib/mentions";
+import { isAndroid } from "@/lib/mobile";
 import { prefersReducedMotion } from "@/lib/motion";
 import { listOllamaModels, type OllamaModel } from "@/lib/ollama";
 import { imagePreview } from "@/lib/preview";
@@ -44,6 +52,18 @@ import { revealFile } from "@/lib/tauri";
 // id helpers are static. The probe/model-list go through `import()`.
 import type { TinfoilModel } from "@/lib/tinfoil";
 import { isTinfoilModel, TINFOIL_MODEL_PREFIX } from "@/lib/tinfoil-model";
+
+const ApprovalCards = lazy(() =>
+  import("@/components/assistant/ApprovalCards").then((module) => ({
+    default: module.ApprovalCards,
+  })),
+);
+const MicButton = lazy(() =>
+  import("@/components/assistant/MicButton").then((module) => ({ default: module.MicButton })),
+);
+const LazyVoiceMode = lazy(() =>
+  import("@/components/assistant/VoiceMode").then((module) => ({ default: module.VoiceMode })),
+);
 
 /**
  * Keychain probe + Tinfoil catalog load, module-scope so effects and
@@ -110,6 +130,11 @@ interface ChatPaneProps {
   waitingAskAgent?: Agent | undefined;
   detailOpen: boolean;
   onToggleDetail: () => void;
+  /** Phone layout only: returns to the conversation list. */
+  onBack?: () => void;
+  /** Shared content to drop into the composer once (keyed by `id`). */
+  prefill?: { id: string; text: string; files: readonly File[] };
+  onPrefillUsed?: () => void;
   onOpenSettings: () => void;
   /**
    * Start recording a demonstration for this Blob. Absent where recording is
@@ -205,8 +230,11 @@ function AttachmentView({ attachment, reading }: { attachment: Attachment; readi
       <button
         type="button"
         className="attachment-shot"
-        title={`Show ${label} in Finder`}
+        title={isAndroid() ? label : `Show ${label} in Finder`}
         onClick={() => {
+          if (isAndroid()) {
+            return;
+          }
           void revealFile(full);
         }}
       >
@@ -591,11 +619,18 @@ export function ChatPane({
   readingMessages = [],
   detailOpen,
   onToggleDetail,
+  onBack,
+  prefill,
+  onPrefillUsed,
   onOpenSettings,
   onTeach,
   teaching,
 }: ChatPaneProps) {
   const [draft, setDraft] = useState("");
+  const [voiceHint, setVoiceHint] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  useReadAloud(messages, thinking, voiceOpen);
   /**
    * Every conversation's unsent draft, as last written to disk. A ref, not
    * state: nothing on screen reads the other conversations' drafts, and this
@@ -979,7 +1014,10 @@ export function ChatPane({
    * stale after the user pulls or removes a model with the app open.
    */
   const refreshModels = useCallback(() => {
-    void listOllamaModels().then(setAvailableModels);
+    // No local models on the phone: Tinfoil is the only brain there.
+    if (!isAndroid()) {
+      void listOllamaModels().then(setAvailableModels);
+    }
     // The keychain probe is memoized per session (see tinfoil.ts): reading
     // the keychain can prompt for the device password, so it happens at most
     // once, and never at mount unless a Tinfoil model is already selected.
@@ -990,7 +1028,10 @@ export function ChatPane({
   // saved model needs it — otherwise wait for the user to open the picker.
   // biome-ignore lint/correctness/useExhaustiveDependencies(model): mount-only probe; the picker's onOpen re-runs it
   useEffect(() => {
-    void listOllamaModels().then(setAvailableModels);
+    // No local models on the phone: Tinfoil is the only brain there.
+    if (!isAndroid()) {
+      void listOllamaModels().then(setAvailableModels);
+    }
     if (isTinfoilModel(model)) {
       probeTinfoilModels(setTinfoilModels);
     }
@@ -1306,6 +1347,12 @@ export function ChatPane({
     // where the keystroke found it. Via `scrollTo`, because the pane sets
     // `scroll-behavior: smooth` and an assignment to `scrollTop` would animate
     // this correction into the very glide it exists to prevent.
+    // Not rendered (the phone layout hides the chat pane behind the list):
+    // scrollHeight reads 0 there, and pinning that as the height left a
+    // 12px-tall composer once the chat was opened. Measure when visible.
+    if (el.scrollHeight === 0) {
+      return;
+    }
     const scroller = scrollRef.current;
     const parked = scroller?.scrollTop;
     const previous = el.offsetHeight;
@@ -1378,6 +1425,23 @@ export function ChatPane({
       });
     }
   };
+
+  // Content shared in from another app (phone share sheet) lands in the
+  // composer for the user to edit and send — never sent on its own.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per prefill id
+  useEffect(() => {
+    if (prefill === undefined) {
+      return;
+    }
+    if (prefill.text !== "") {
+      setDraft((current) => (current.trim() === "" ? prefill.text : `${current}\n${prefill.text}`));
+    }
+    if (prefill.files.length > 0) {
+      addFiles(prefill.files);
+    }
+    textareaRef.current?.focus();
+    onPrefillUsed?.();
+  }, [prefill?.id]);
 
   /** The circle shows Stop only with an empty composer: a draft typed mid-turn
       is a follow-up that steers the running loop, so Send must stay reachable. */
@@ -1646,6 +1710,16 @@ export function ChatPane({
       aria-label={group === undefined ? `Conversation with ${agent.name}` : `Group ${group.name}`}
     >
       <header className="chat-header" data-tauri-drag-region>
+        {onBack === undefined ? null : (
+          <button
+            type="button"
+            className="icon-button phone-back"
+            aria-label="Back to conversations"
+            onClick={onBack}
+          >
+            <ChevronLeft size={22} strokeWidth={2} aria-hidden="true" />
+          </button>
+        )}
         {/* drag-region only fires on the element itself, so the header stays
             draggable around this identity button. */}
         {/* Both identities live in this box during a switch: the outgoing one
@@ -1759,7 +1833,11 @@ export function ChatPane({
             {model !== "" &&
             !availableModels.some((entry) => entry.name === model) &&
             !tinfoilModels.some((entry) => `${TINFOIL_MODEL_PREFIX}${entry.id}` === model) ? (
-              <option value={model}>{model}</option>
+              <option value={model}>
+                {model.startsWith(TINFOIL_MODEL_PREFIX)
+                  ? model.slice(TINFOIL_MODEL_PREFIX.length)
+                  : model}
+              </option>
             ) : null}
             {availableModels.length > 0 ? (
               <optgroup label="Ollama — local">
@@ -1948,13 +2026,16 @@ export function ChatPane({
           aria-hidden={!thinking}
           aria-label={thinking ? `${(thinkingAgent ?? agent).name} is thinking` : undefined}
         >
-          <BlobAvatar
+          <AnimatedBlob
             tone={(thinkingAgent ?? agent).tone}
             shape={(thinkingAgent ?? agent).shape}
             size={30}
-            variant="thinking"
+            mood={thinking ? "thinking" : "idle"}
           />
         </div>
+        <Suspense fallback={null}>
+          <ApprovalCards conversationId={group === undefined ? agent.id : `group:${group.id}`} />
+        </Suspense>
         {waitingAsk === "action" ? (
           <div className="ask-action-bar" role="status">
             <span>{(waitingAskAgent ?? agent).name} needs you to do something above.</span>
@@ -2146,6 +2227,36 @@ export function ChatPane({
               >
                 <Plus size={16} strokeWidth={2} aria-hidden="true" />
               </button>
+              {/* Phone camera: opens the rear camera straight away. */}
+              <button
+                type="button"
+                className="icon-button composer-add"
+                aria-label="Take photo"
+                disabled={attached.length >= MAX_ATTACHMENTS}
+                onClick={() => cameraInputRef.current?.click()}
+              >
+                <Camera size={16} strokeWidth={2} aria-hidden="true" />
+              </button>
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="visually-hidden"
+                aria-label="Take photo"
+                onChange={(event) => {
+                  addFiles(event.currentTarget.files);
+                  event.currentTarget.value = "";
+                }}
+              />
+              <button
+                type="button"
+                className="icon-button composer-add"
+                aria-label="Talk with voice mode"
+                onClick={() => setVoiceOpen(true)}
+              >
+                <AudioLines size={16} strokeWidth={2} aria-hidden="true" />
+              </button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -2227,6 +2338,16 @@ export function ChatPane({
               does the same), so the control that starts a turn also ends it.
               Idle with nothing typed it is a disabled Send — there is no
               dictation to offer yet. */}
+          <Suspense fallback={null}>
+            <MicButton
+              onText={(text) => {
+                const next = draft.trim() === "" ? text : `${draft.trimEnd()} ${text}`;
+                setDraft(next);
+                rememberDraft(next);
+              }}
+              onHint={setVoiceHint}
+            />
+          </Suspense>
           <button
             type={hasDraft ? "submit" : "button"}
             className="composer-mic"
@@ -2245,6 +2366,22 @@ export function ChatPane({
           </button>
         </div>
       </form>
+      {voiceHint === null ? null : (
+        <p className="voice-hint" role="status">
+          {voiceHint}
+        </p>
+      )}
+      {voiceOpen && group === undefined ? (
+        <Suspense fallback={null}>
+          <LazyVoiceMode
+            agent={agent}
+            messages={messages}
+            thinking={thinking}
+            onSend={(text) => onSend(text)}
+            onClose={() => setVoiceOpen(false)}
+          />
+        </Suspense>
+      ) : null}
     </section>
   );
 }

@@ -1,10 +1,20 @@
 import { CircleArrowDown, Cpu, Plug, Settings, X } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ExternalLink } from "@/components/ExternalLink";
 import { PillSelect } from "@/components/PillSelect";
 import { COMPOSIO_DASHBOARD_URL, composioCheck, forgetComposioSession } from "@/lib/composio";
 import { composioLogIn, composioSignOut, loadComposioTokens } from "@/lib/composio-oauth";
 import { ffmpegPresent } from "@/lib/media";
+import { isAndroid } from "@/lib/mobile";
 import {
   getOllamaVersion,
   isOllamaInstalled,
@@ -27,6 +37,12 @@ import {
   useUpdateState,
 } from "@/lib/updater";
 import { useExitAnimation } from "@/lib/useExitAnimation";
+
+const AssistantSettings = lazy(() =>
+  import("@/components/assistant/AssistantSettings").then((module) => ({
+    default: module.AssistantSettings,
+  })),
+);
 
 export const MAX_USER_NAME_LENGTH = 32;
 
@@ -305,7 +321,11 @@ export function SettingsModal({
   acp,
   onClose,
 }: SettingsModalProps) {
-  const [tab, setTab] = useState<SettingsTab>(initialTab);
+  // The phone build has no updater, Ollama, ffmpeg, Composio CLI or editors.
+  const android = isAndroid();
+  const [tab, setTab] = useState<SettingsTab>(
+    android && initialTab === "updates" ? "general" : initialTab,
+  );
   // The version row reads the running app, not a constant: a hardcoded string
   // here silently went stale across releases (showed 0.1.2 in 0.1.4). Null in
   // a plain browser or tests, where there is no bundle to ask.
@@ -335,23 +355,25 @@ export function SettingsModal({
 
   // Probe lazily: only once the Model tab is first opened.
   useEffect(() => {
-    if (tab === "model" && ollama.kind === "idle") {
+    if (tab === "model" && ollama.kind === "idle" && !android) {
       void probeOllama(setOllama);
     }
     if (tab === "model" && tinfoil.kind === "idle") {
       void probeTinfoil(setTinfoil);
     }
-    if (tab === "model" && ffmpeg === undefined) {
+    if (tab === "model" && ffmpeg === undefined && !android) {
       void ffmpegPresent().then(setFfmpeg);
     }
     if (tab === "plugins" && composio.stage === "idle") {
-      void probeComposio(setComposio);
+      if (!android) {
+        void probeComposio(setComposio);
+      }
       // Read here rather than from App's copy: this tab is where a user looks
       // after adding a folder, so it should reflect the disk, not the list
       // captured at startup.
       void listSkills().then(setSkills);
     }
-  }, [tab, ollama.kind, tinfoil.kind, composio.stage, ffmpeg]);
+  }, [tab, ollama.kind, tinfoil.kind, composio.stage, ffmpeg, android]);
 
   const availableModels = ollama.kind === "running" ? ollama.models : [];
   const tinfoilModels = tinfoil.kind === "configured" ? tinfoil.models : [];
@@ -535,15 +557,17 @@ export function SettingsModal({
             <Plug size={15} strokeWidth={1.8} aria-hidden="true" />
             Plugins
           </button>
-          <button
-            type="button"
-            className={tab === "updates" ? "rail-item rail-item-active" : "rail-item"}
-            aria-current={tab === "updates" ? "true" : undefined}
-            onClick={() => setTab("updates")}
-          >
-            <CircleArrowDown size={15} strokeWidth={1.8} aria-hidden="true" />
-            Updates
-          </button>
+          {android ? null : (
+            <button
+              type="button"
+              className={tab === "updates" ? "rail-item rail-item-active" : "rail-item"}
+              aria-current={tab === "updates" ? "true" : undefined}
+              onClick={() => setTab("updates")}
+            >
+              <CircleArrowDown size={15} strokeWidth={1.8} aria-hidden="true" />
+              Updates
+            </button>
+          )}
         </nav>
 
         <div className="modal-content">
@@ -652,6 +676,10 @@ export function SettingsModal({
                 </div>
               </div>
 
+              <Suspense fallback={null}>
+                <AssistantSettings />
+              </Suspense>
+
               <p className="modal-section-label">Developer</p>
               <div className="modal-card">
                 <div className="modal-row modal-row-multiline">
@@ -673,87 +701,91 @@ export function SettingsModal({
             <>
               <h2 className="modal-title">Plugins</h2>
 
-              <p className="modal-section-label">Composio</p>
-              <div className="modal-card">
-                <div className="modal-row modal-row-multiline">
-                  <span className="modal-row-text">
-                    <span className="modal-row-title ollama-title">
-                      <span
-                        className={`ollama-dot ollama-dot-${composioTone(composio)}`}
-                        aria-hidden="true"
-                      />
-                      Composio
-                    </span>
-                    <span className="modal-row-blurb" aria-live="polite">
-                      {composioBlurb(composio)}
-                    </span>
-                  </span>
-                  {composio.stage === "signedIn" ||
-                  (composio.stage === "needsKey" && composio.session) ? (
-                    <button
-                      type="button"
-                      className="modal-button"
-                      onClick={() => void signOutComposio()}
-                    >
-                      Sign out
-                    </button>
-                  ) : composio.stage === "needsKey" ? (
-                    <button type="button" className="modal-button" onClick={() => void logIn()}>
-                      Log in
-                    </button>
-                  ) : (
-                    <button type="button" className="modal-button" disabled>
-                      {"Checking\u2026"}
-                    </button>
-                  )}
-                </div>
-                {composio.stage === "needsKey" ? (
-                  <>
-                    {/* Same shape as the Tinfoil key below: a divider, a
+              {android ? null : (
+                <>
+                  <p className="modal-section-label">Composio</p>
+                  <div className="modal-card">
+                    <div className="modal-row modal-row-multiline">
+                      <span className="modal-row-text">
+                        <span className="modal-row-title ollama-title">
+                          <span
+                            className={`ollama-dot ollama-dot-${composioTone(composio)}`}
+                            aria-hidden="true"
+                          />
+                          Composio
+                        </span>
+                        <span className="modal-row-blurb" aria-live="polite">
+                          {composioBlurb(composio)}
+                        </span>
+                      </span>
+                      {composio.stage === "signedIn" ||
+                      (composio.stage === "needsKey" && composio.session) ? (
+                        <button
+                          type="button"
+                          className="modal-button"
+                          onClick={() => void signOutComposio()}
+                        >
+                          Sign out
+                        </button>
+                      ) : composio.stage === "needsKey" ? (
+                        <button type="button" className="modal-button" onClick={() => void logIn()}>
+                          Log in
+                        </button>
+                      ) : (
+                        <button type="button" className="modal-button" disabled>
+                          {"Checking\u2026"}
+                        </button>
+                      )}
+                    </div>
+                    {composio.stage === "needsKey" ? (
+                      <>
+                        {/* Same shape as the Tinfoil key below: a divider, a
                         labelled stack, then the input and its button on one
                         `modal-field-row`. The hand-rolled row this replaced
                         used a class with no CSS behind it, so the button sat
                         flush against the input. */}
-                    <div className="modal-divider" />
-                    <div className="modal-stack">
-                      <span className="modal-row-title" id="composio-key-label">
-                        Or paste an API key
-                      </span>
-                      <span className="modal-row-blurb">
-                        Only if the browser sign-in cannot finish.{" "}
-                        <ExternalLink href={COMPOSIO_DASHBOARD_URL}>Get a key</ExternalLink>
-                      </span>
-                      <div className="modal-field-row">
-                        <input
-                          id="composio-key"
-                          type="password"
-                          className="modal-name-input"
-                          autoComplete="off"
-                          aria-labelledby="composio-key-label"
-                          placeholder="Paste your API key"
-                          value={composioKeyDraft}
-                          onChange={(event) => setComposioKeyDraft(event.currentTarget.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              void saveComposioKey();
-                            }
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="modal-button"
-                          disabled={composioKeyDraft.trim() === ""}
-                          onClick={() => void saveComposioKey()}
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
+                        <div className="modal-divider" />
+                        <div className="modal-stack">
+                          <span className="modal-row-title" id="composio-key-label">
+                            Or paste an API key
+                          </span>
+                          <span className="modal-row-blurb">
+                            Only if the browser sign-in cannot finish.{" "}
+                            <ExternalLink href={COMPOSIO_DASHBOARD_URL}>Get a key</ExternalLink>
+                          </span>
+                          <div className="modal-field-row">
+                            <input
+                              id="composio-key"
+                              type="password"
+                              className="modal-name-input"
+                              autoComplete="off"
+                              aria-labelledby="composio-key-label"
+                              placeholder="Paste your API key"
+                              value={composioKeyDraft}
+                              onChange={(event) => setComposioKeyDraft(event.currentTarget.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  void saveComposioKey();
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="modal-button"
+                              disabled={composioKeyDraft.trim() === ""}
+                              onClick={() => void saveComposioKey()}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
 
-              {acp}
+                  {acp}
+                </>
+              )}
 
               <p className="modal-section-label">Skills</p>
               <div className="modal-card">
@@ -788,81 +820,85 @@ export function SettingsModal({
             <>
               <h2 className="modal-title">Model</h2>
 
-              <p className="modal-section-label">Ollama</p>
-              <div className="modal-card">
-                <div className="modal-row modal-row-multiline">
-                  <span className="modal-row-text">
-                    <span className="modal-row-title ollama-title">
-                      <span
-                        className={`ollama-dot ollama-dot-${OLLAMA_DOT_TONE[ollama.kind]}`}
-                        aria-hidden="true"
-                      />
-                      Ollama
-                    </span>
-                    <span className="modal-row-blurb" aria-live="polite">
-                      {ollamaBlurb(ollama)}
-                    </span>
-                  </span>
-                  {ollama.kind === "not-installed" ? (
-                    <ExternalLink href="https://ollama.com/download" className="modal-button">
-                      Get Ollama
-                    </ExternalLink>
-                  ) : ollama.kind === "stopped" ||
-                    ollama.kind === "start-failed" ||
-                    ollama.kind === "starting" ? (
-                    <button
-                      type="button"
-                      className="modal-button"
-                      disabled={ollama.kind === "starting"}
-                      onClick={() => void turnOnOllama()}
-                    >
-                      {ollama.kind === "starting" ? "Starting\u2026" : "Turn On"}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="modal-button"
-                      disabled={ollama.kind !== "running"}
-                      onClick={() => void probeOllama(setOllama)}
-                    >
-                      Re-check
-                    </button>
-                  )}
-                </div>
-              </div>
+              {android ? null : (
+                <>
+                  <p className="modal-section-label">Ollama</p>
+                  <div className="modal-card">
+                    <div className="modal-row modal-row-multiline">
+                      <span className="modal-row-text">
+                        <span className="modal-row-title ollama-title">
+                          <span
+                            className={`ollama-dot ollama-dot-${OLLAMA_DOT_TONE[ollama.kind]}`}
+                            aria-hidden="true"
+                          />
+                          Ollama
+                        </span>
+                        <span className="modal-row-blurb" aria-live="polite">
+                          {ollamaBlurb(ollama)}
+                        </span>
+                      </span>
+                      {ollama.kind === "not-installed" ? (
+                        <ExternalLink href="https://ollama.com/download" className="modal-button">
+                          Get Ollama
+                        </ExternalLink>
+                      ) : ollama.kind === "stopped" ||
+                        ollama.kind === "start-failed" ||
+                        ollama.kind === "starting" ? (
+                        <button
+                          type="button"
+                          className="modal-button"
+                          disabled={ollama.kind === "starting"}
+                          onClick={() => void turnOnOllama()}
+                        >
+                          {ollama.kind === "starting" ? "Starting\u2026" : "Turn On"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="modal-button"
+                          disabled={ollama.kind !== "running"}
+                          onClick={() => void probeOllama(setOllama)}
+                        >
+                          Re-check
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
-              {/* Not a model, but the same question the tabs above answer:
+                  {/* Not a model, but the same question the tabs above answer:
                   what can this machine actually do? A Blob's media tools are
                   hidden entirely without ffmpeg, so this is the only place
                   that says why they are missing. */}
-              <p className="modal-section-label">Media</p>
-              <div className="modal-card">
-                <div className="modal-row modal-row-multiline">
-                  <span className="modal-row-text">
-                    <span className="modal-row-title ollama-title">
-                      <span
-                        className={`ollama-dot ollama-dot-${ffmpeg === true ? "ok" : "warn"}`}
-                        aria-hidden="true"
-                      />
-                      ffmpeg
-                    </span>
-                    <span className="modal-row-blurb" aria-live="polite">
-                      {ffmpeg === undefined
-                        ? "Checking…"
-                        : ffmpeg
-                          ? "Found. Your Blobs can describe, trim and pull the audio out of media files in their own folders."
-                          : "Not found, so those tools are hidden. Install it with `brew install ffmpeg`, then re-check."}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="modal-button"
-                    onClick={() => void ffmpegPresent().then(setFfmpeg)}
-                  >
-                    Re-check
-                  </button>
-                </div>
-              </div>
+                  <p className="modal-section-label">Media</p>
+                  <div className="modal-card">
+                    <div className="modal-row modal-row-multiline">
+                      <span className="modal-row-text">
+                        <span className="modal-row-title ollama-title">
+                          <span
+                            className={`ollama-dot ollama-dot-${ffmpeg === true ? "ok" : "warn"}`}
+                            aria-hidden="true"
+                          />
+                          ffmpeg
+                        </span>
+                        <span className="modal-row-blurb" aria-live="polite">
+                          {ffmpeg === undefined
+                            ? "Checking…"
+                            : ffmpeg
+                              ? "Found. Your Blobs can describe, trim and pull the audio out of media files in their own folders."
+                              : "Not found, so those tools are hidden. Install it with `brew install ffmpeg`, then re-check."}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="modal-button"
+                        onClick={() => void ffmpegPresent().then(setFfmpeg)}
+                      >
+                        Re-check
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <p className="modal-section-label">Tinfoil</p>
               <div className="modal-card">
@@ -950,7 +986,11 @@ export function SettingsModal({
                       Chat model
                     </label>
                     <span className="modal-row-blurb">
-                      {modelBlurb(ollama, tinfoilModels.length > 0)}
+                      {android
+                        ? tinfoilModels.length > 0
+                          ? "Replies come from Tinfoil's private cloud."
+                          : "Add a Tinfoil key above to choose a model."
+                        : modelBlurb(ollama, tinfoilModels.length > 0)}
                     </span>
                   </span>
                   <PillSelect
@@ -989,7 +1029,7 @@ export function SettingsModal({
             </>
           ) : null}
 
-          {tab === "updates" ? (
+          {tab === "updates" && !android ? (
             <>
               <h2 className="modal-title">Updates</h2>
 

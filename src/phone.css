@@ -1,0 +1,279 @@
+/* Phone layout (≤640px, and always on Android). Every rule is scoped under
+   .app-shell-phone, which App only sets in the phone layout, so the desktop
+   layout above 640px is untouched. */
+
+.app-shell-phone {
+  min-width: 0;
+  width: 100%;
+  /* The webview resizes for the on-screen keyboard (interactive-widget in
+     index.html); dvh keeps the composer above it in browsers too. */
+  height: 100dvh;
+  position: relative;
+  overflow: hidden;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+}
+
+/* Home: the conversation list fills the screen. */
+.app-shell-phone .sidebar {
+  /* biome-ignore lint/complexity/noImportantStyles: beats the sidebar's inline resize width */
+  width: 100% !important;
+  border-right: none;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.app-shell-phone .sidebar-resize-handle,
+.app-shell-phone .traffic-lights {
+  display: none;
+}
+.app-shell-phone.phone-main .sidebar {
+  display: none;
+}
+
+/* Chat / compose / creator: full screen over the list. */
+.app-shell-phone .chat-pane,
+.app-shell-phone .compose-pane,
+.app-shell-phone .creator-pane {
+  width: 100%;
+  min-width: 0;
+}
+.app-shell-phone.phone-list :is(.chat-pane, .compose-pane, .creator-pane, .slide-panel) {
+  display: none;
+}
+.app-shell-phone .chat-header {
+  height: 56px;
+  padding: 0 8px;
+}
+
+/* Detail panel: a full-screen sheet instead of a side column. */
+.app-shell-phone .slide-panel-right {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  width: 100%;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface-detail);
+}
+.app-shell-phone .slide-panel-right > * {
+  width: 100%;
+}
+.app-shell-phone .slide-panel-right.slide-panel-closed {
+  width: 100%;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+/* Modals (Settings, Plugins, Search, prompts): full-screen sheets. */
+.app-shell-phone .modal-backdrop {
+  padding: 0;
+}
+.app-shell-phone :is(.settings-modal, .prompt-modal, .plugins-modal, .search-modal) {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  box-sizing: border-box;
+}
+.app-shell-phone .settings-modal {
+  flex-direction: column;
+}
+.app-shell-phone .modal-rail {
+  flex-direction: row;
+  width: auto;
+  overflow-x: auto;
+  border-right: none;
+  border-bottom: 1px solid var(--border-hairline);
+  padding: 4px 48px 4px 8px;
+}
+.app-shell-phone .modal-content {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+}
+
+/* Touch targets ≥44px. */
+.app-shell-phone :is(.icon-button, .rail-item, .modal-button, .context-menu-item) {
+  min-width: 44px;
+  min-height: 44px;
+}
+.app-shell-phone .agent-row {
+  min-height: 56px;
+}
+
+/* No hover on touch: actions that only appeared on hover are shown. */
+@media (hover: none) {
+  .app-shell-phone .message-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.app-shell-phone .phone-back-floating {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 6px);
+  left: 6px;
+  z-index: 5;
+}
+
+/* Share sheet ("Send to…"): bottom sheet on any layout. */
+.share-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.share-sheet {
+  width: min(560px, 100%);
+  max-height: 80dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-modal);
+  color: inherit;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.25);
+}
+.share-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 0 16px;
+}
+.share-sheet-title {
+  margin: 0;
+  font-size: 17px;
+}
+.share-sheet-preview {
+  margin: 8px 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-control);
+  font-size: 14px;
+}
+.share-sheet-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.share-sheet-files {
+  margin: 4px 0 0;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  opacity: 0.75;
+}
+.share-sheet-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 8px;
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+.share-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.share-sheet-row:active {
+  background: var(--surface-selected);
+}
+.share-sheet-faces {
+  display: flex;
+}
+.share-sheet-faces > * + * {
+  margin-left: -10px;
+}
+.share-sheet-name {
+  font-weight: 600;
+}
+.share-sheet-meta {
+  margin-left: auto;
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+/* Touch screens: a long-press on a button must not select its label or open
+   the copy/share menu (the Android WebView does both by default). Message
+   text stays selectable; only controls are excluded. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  [role="menuitem"],
+  [role="tab"] {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
+/* Chat header on a phone: name on the first row, the Thinking/Model pills
+   and the details button on their own row beneath it. Side by side they
+   squeezed the Blob's name to one letter and the model id to "tinfoil:de…". */
+.app-shell-phone .chat-pane .chat-header {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 56px;
+  row-gap: 2px;
+  padding: 4px 8px;
+}
+.app-shell-phone .chat-pane .chat-header-swap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.app-shell-phone .chat-pane .chat-header-controls {
+  flex: 1 0 100%;
+  justify-content: flex-end;
+  padding-bottom: 4px;
+}
+.app-shell-phone .chat-header-controls .pill-select select {
+  max-width: 46vw;
+}
+
+/* Message actions: beside the bubble they ran off the screen edge, so on a
+   phone they sit on their own line under it. Selector specificity has to beat
+   the hover rule in App.css, since a tap leaves :hover stuck on touch. */
+.app-shell-phone .message-line {
+  flex-wrap: wrap;
+}
+.app-shell-phone
+  .message-row:is(.message-row-agent, .message-row-user)
+  .message-line
+  .message-actions {
+  position: static;
+  order: 2;
+  flex-basis: 100%;
+  translate: none;
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+.app-shell-phone .message-row-user .message-line .message-actions {
+  justify-content: flex-end;
+}
+
+/* The New Blob header sits under the floating back button. */
+.app-shell-phone .creator-pane .chat-header {
+  padding-left: 56px;
+}

@@ -2,10 +2,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "@/App";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { isAndroid } from "@/lib/mobile";
 import { initAutoUpdate } from "@/lib/updater";
 
 // Fire-and-forget: checks now and every few hours, no-op outside Tauri.
-initAutoUpdate();
+// No updater on Android: the store (or a new APK) delivers updates there.
+if (!isAndroid()) {
+  initAutoUpdate();
+}
 
 const container = document.getElementById("root");
 

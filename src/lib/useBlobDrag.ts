@@ -50,6 +50,11 @@ export function useBlobDrag(onDrop: (id: string, zone: string) => void) {
     if (event.button !== 0) {
       return;
     }
+    // Touch: a finger moving over the list is a scroll, not a drag. Phones
+    // move Blobs through the long-press menu instead.
+    if (event.pointerType === "touch") {
+      return;
+    }
     const originX = event.clientX;
     const originY = event.clientY;
     dragged.current = false;

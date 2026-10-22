@@ -1,5 +1,10 @@
 import { ChevronsRight, Clock, FileText, Plus, Settings, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+
+const ActivityLog = lazy(() =>
+  import("@/components/assistant/ActivityLog").then((module) => ({ default: module.ActivityLog })),
+);
+
 import type { Agent, Routine } from "@/data/agents";
 import { type HomeEntry, homeFor } from "@/lib/home";
 
@@ -153,6 +158,7 @@ export function DetailPanel({
   onCreateRoutine,
   onOpenRoutine,
 }: DetailPanelProps) {
+  const [activityOpen, setActivityOpen] = useState(false);
   const lifetime = (agent.usage?.inputTokens ?? 0) + (agent.usage?.outputTokens ?? 0);
   return (
     <aside className="detail-panel" aria-label={`${agent.name} details`}>
@@ -177,6 +183,15 @@ export function DetailPanel({
           </button>
         </div>
       </header>
+
+      <button type="button" className="routine-create" onClick={() => setActivityOpen(true)}>
+        Activity log
+      </button>
+      {activityOpen ? (
+        <Suspense fallback={null}>
+          <ActivityLog blobs={[agent]} onClose={() => setActivityOpen(false)} />
+        </Suspense>
+      ) : null}
 
       <section className="routines" aria-label="Routines">
         {routines.length === 0 ? (

@@ -1,0 +1,172 @@
+/* Assistant features: animated Blob, voice mode, mic, approvals, activity log. */
+
+.animated-blob {
+  --blob-level: 0;
+  display: inline-flex;
+  transform-origin: 50% 85%;
+  transition: transform 220ms var(--ease-squish, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+.animated-blob-idle {
+  animation: blob-breathe 4.2s ease-in-out infinite;
+}
+.animated-blob-thinking {
+  animation: blob-ponder 1.6s var(--ease-squish, ease-in-out) infinite;
+}
+.animated-blob-listening,
+.animated-blob-speaking {
+  transform: scale(calc(1 + var(--blob-level) * 0.12), calc(1 - var(--blob-level) * 0.06));
+}
+.animated-blob-listening {
+  filter: drop-shadow(0 0 calc(var(--blob-level) * 28px) rgba(255, 255, 255, 0.45));
+}
+@keyframes blob-breathe {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(1.03, 0.97);
+  }
+}
+@keyframes blob-ponder {
+  0%,
+  100% {
+    transform: scale(1, 1) rotate(0deg);
+  }
+  30% {
+    transform: scale(1.06, 0.93) rotate(-3deg);
+  }
+  60% {
+    transform: scale(0.96, 1.05) rotate(3deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animated-blob,
+  .animated-blob[data-mood] {
+    animation: none;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+}
+
+/* Composer mic */
+.voice-mic {
+  flex: none;
+}
+.voice-mic[data-recording="true"] {
+  color: #e0201c;
+}
+.voice-hint {
+  font-size: 12px;
+  opacity: 0.75;
+  padding: 2px 12px;
+}
+
+/* Voice mode */
+.voice-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+  background: var(--bg, #111);
+  color: var(--text, #fff);
+}
+.voice-mode-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  border: 0;
+  background: none;
+  color: inherit;
+  width: 100%;
+  cursor: pointer;
+}
+.voice-mode-state {
+  font-size: 14px;
+  opacity: 0.7;
+}
+.voice-mode-caption {
+  min-height: 3em;
+  max-width: 32em;
+  text-align: center;
+  font-size: 17px;
+  line-height: 1.4;
+}
+.voice-mode-end {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 28px;
+  background: #e0201c;
+  color: #fff;
+  font-size: 15px;
+}
+
+/* Approval card */
+.approval-card {
+  margin: 8px 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.approval-card-title {
+  font-weight: 600;
+}
+.approval-card-args {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  opacity: 0.8;
+  word-break: break-word;
+}
+.approval-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.approval-card-actions label {
+  font-size: 13px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+/* Activity log */
+.activity-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.activity-log li {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.activity-log-meta {
+  opacity: 0.65;
+  font-size: 12px;
+}
+.activity-log-error {
+  color: #e0201c;
+}
+.speak-button {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.bubble-photo {
+  max-width: 240px;
+  border-radius: 12px;
+  display: block;
+}

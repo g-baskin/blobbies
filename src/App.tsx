@@ -1,4 +1,5 @@
 import type { Message as AiMessage } from "@kenkaiiii/gg-ai";
+import { ChevronLeft } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ChatPane } from "@/components/ChatPane";
 import { ComposePane } from "@/components/ComposePane";
@@ -15,6 +16,7 @@ import {
   type ThemePreference,
 } from "@/components/SettingsModal";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { ShareSheet, type ShareTarget, shareText } from "@/components/ShareSheet";
 import { Sidebar } from "@/components/Sidebar";
 import { SlidePanel } from "@/components/SlidePanel";
 import {
@@ -45,6 +47,7 @@ import {
   saveAttachments,
 } from "@/lib/attachments";
 import type { BlobMemory, RosterAccess, RoutineAccess } from "@/lib/blob-tools";
+import { canCapture } from "@/lib/capture-support";
 import { composioSignedIn, connectedAppNames, setComposioToolkits } from "@/lib/composio";
 import { contextWindow } from "@/lib/context-window";
 import { publishConversation } from "@/lib/conversation-bus";
@@ -62,9 +65,11 @@ import {
 import { homeFor } from "@/lib/home";
 import type { Intent } from "@/lib/intent";
 import { type McpServerConfig, parseLoopbackUrl } from "@/lib/mcp-config";
+import { isAndroid, onShare, type SharedContent, takePendingShare } from "@/lib/mobile";
 import { modelSeesImages } from "@/lib/model-vision";
 import { notify, shouldNotify } from "@/lib/notify";
 import { unloadOllamaModel } from "@/lib/ollama";
+import { installLongPress, useBackLayer, usePhoneLayout } from "@/lib/phone";
 import { readPreference, writePreference } from "@/lib/preferences";
 import { imagePreview } from "@/lib/preview";
 import { blobSystemPrompt, configFieldEmpty, splitHistory, timeNote } from "@/lib/prompt";
@@ -72,14 +77,14 @@ import type { Recap, RecapEntry } from "@/lib/recap";
 import { type ActiveRun, assertTransition, isTerminal, type RunTrigger } from "@/lib/run-state";
 import { describeSchedule, nextFireTime, scheduleBudget } from "@/lib/schedule";
 import { startScheduler } from "@/lib/scheduler";
-import { type Capture, canCapture } from "@/lib/screenshot";
+import type { Capture } from "@/lib/screenshot";
 import type { SearchResult } from "@/lib/search";
 import { listSkills, type Skill, skillLine } from "@/lib/skills";
 import { playChime } from "@/lib/sound";
 import * as store from "@/lib/store";
 import { openExternal } from "@/lib/tauri";
 import * as teach from "@/lib/teach";
-import { isTinfoilModel } from "@/lib/tinfoil-model";
+import { isTinfoilModel, TINFOIL_MODEL_PREFIX } from "@/lib/tinfoil-model";
 import { dropOrphanToolResults, toolTraceMessages, trimToolTrace } from "@/lib/tool-trace";
 import {
   buildEventContext,
@@ -89,9 +94,9 @@ import {
   type TriggerEvent,
 } from "@/lib/trigger";
 import type { PollCursor } from "@/lib/trigger-poll";
-
 import { checkForUpdates, onTrayUpdateCheck } from "@/lib/updater";
 import "./App.css";
+import "./phone.css";
 
 // Both only exist behind the Editors (ACP) toggle, which most users never
 // touch — so they stay out of the startup chunk (scripts/bundle-budget.mjs).
@@ -273,6 +278,18 @@ export function App() {
   const selectedGroupIdRef = useRef(selectedGroupId);
   selectedGroupIdRef.current = selectedGroupId;
   const [mode, setMode] = useState<Mode>({ kind: "chat" });
+  /** Phone layout: the conversation list is home; a chat covers it when open. */
+  const phone = usePhoneLayout();
+  const [phoneChat, setPhoneChat] = useState(false);
+  /** Content shared in from another app, waiting for "Send to…". */
+  const [pendingShare, setPendingShare] = useState<SharedContent | null>(null);
+  /** A picked share, waiting for its conversation's composer to take it. */
+  const [prefill, setPrefill] = useState<{
+    conversation: string;
+    id: string;
+    text: string;
+    files: File[];
+  } | null>(null);
   // Details stay hidden until explicitly opened from the chat header.
   const [detailOpen, setDetailOpen] = useState(false);
   /** Bumped when the Blob's home folder changed, so the Files list re-reads. */
@@ -577,7 +594,8 @@ export function App() {
         if (typeof settings.model === "string") {
           setModel(settings.model);
         }
-        if (Array.isArray(settings.mcpServers)) {
+        // Local (loopback) MCP servers live on a desktop; the phone has none.
+        if (Array.isArray(settings.mcpServers) && !isAndroid()) {
           // Stored config is re-validated on load: the file is editable, and
           // an entry that is no longer loopback must never be contacted.
           setMcpServers(
@@ -792,6 +810,29 @@ export function App() {
     writePreference("pref:reasoning", on ? "on" : "off");
   };
 
+  // Android has no Ollama: an empty or local model falls back to the first
+  // Tinfoil model (dynamic import keeps the provider stack out of startup).
+  useEffect(() => {
+    if (!isAndroid() || isTinfoilModel(model)) {
+      return;
+    }
+    let alive = true;
+    void import("@/lib/tinfoil")
+      .then(({ listTinfoilModels }) => listTinfoilModels())
+      .then((models) => {
+        const first = models[0];
+        if (alive && first !== undefined) {
+          const next = `${TINFOIL_MODEL_PREFIX}${first.id}`;
+          setModel(next);
+          writePreference("pref:model", next);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [model]);
+
   const changeModel = (next: string) => {
     // Free the outgoing model's memory right away: Ollama keeps multiple
     // models resident, so without this the old one idles in RAM beside the
@@ -861,6 +902,7 @@ export function App() {
   const activeMode: Mode = agent === undefined ? { kind: "creator", initialName: "" } : mode;
 
   const openConversation = (id: string) => {
+    setPhoneChat(true);
     setSelectedId(id);
     setSelectedGroupId(null);
     setMode({ kind: "chat" });
@@ -875,6 +917,7 @@ export function App() {
 
   /** Open a group chat. The details panel is per-Blob, so it closes. */
   const openGroup = (id: string) => {
+    setPhoneChat(true);
     setSelectedGroupId(id);
     setMode({ kind: "chat" });
     setDetailOpen(false);
@@ -1085,6 +1128,9 @@ export function App() {
   useEffect(() => {
     // Setters rather than `openSettingsModal`, which is rebuilt every render
     // and would resubscribe the tray listener along with it.
+    if (isAndroid()) {
+      return;
+    }
     return onTrayUpdateCheck(() => {
       setSettingsTab("updates");
       setSettingsOpen(true);
@@ -1833,6 +1879,17 @@ export function App() {
     //
     // Paired with the transcript id each message came from, so whatever falls
     // out of the window can be handed to the summariser after the turn.
+    // Photos go to a vision model as real images on the newest user message
+    // only (lib/vision); older ones stay as their OCR text.
+    const newestUser = [...history]
+      .reverse()
+      .find((entry) => entry.kind === "text" && entry.author === "user");
+    const newestImages =
+      newestUser?.kind === "text" && (newestUser.attachments ?? []).some((a) => a.vision)
+        ? await (await import("@/lib/vision")).loadVisionImages(home, newestUser.attachments ?? [])
+        : [];
+    const seesPhotos = newestImages.length > 0 && (await modelSeesImages(model));
+    const { messageContent } = seesPhotos ? await import("@/lib/vision") : { messageContent: null };
     const rendered: RecapEntry[] = (
       await Promise.all(
         history
@@ -1874,7 +1931,16 @@ export function App() {
               // Same transcript id across the pair: whatever falls out of the
               // window is handed to the summariser as one message's worth.
               ...trace.map((message) => ({ id: entry.id, message })),
-              { id: entry.id, message: { role, content } },
+              {
+                id: entry.id,
+                message:
+                  entry.id === newestUser?.id && messageContent !== null
+                    ? ({
+                        role: "user",
+                        content: messageContent(content, newestImages, true),
+                      } as AiMessage)
+                    : { role, content },
+              },
             ];
           }),
       )
@@ -1916,7 +1982,7 @@ export function App() {
             // This host shows captures in the transcript, so the turn's
             // catalog carries take_screenshot and the prompt names it. False
             // where capture cannot work at all (browser, Linux builds).
-            canScreenshot: canCapture(),
+            canScreenshot: canCapture() && !isAndroid(),
             // The rest of the user's team, on exactly the turns that carry the
             // roster tools: a solo chat or an autonomous turn can hand work
             // over or reconfigure a sibling, and both resolve names exactly.
@@ -2240,7 +2306,21 @@ export function App() {
           void showCapture(convoId, speaker.id, capture, caption);
         },
         onCheckpoint: flushTranscript,
+        // Ask before acting (lib/approvals). A user turn has someone watching
+        // the card; anything else is unattended and also leaves a notification.
+        gate: async ({ name, args, signal }) =>
+          (await import("@/lib/approvals")).requestApproval({
+            blobId: target.id,
+            blobName: speaker.name,
+            conversationId: convoId,
+            tool: name,
+            args,
+            unattended: trigger === "routine",
+            signal,
+            notify: (title, body) => void notify(title, body),
+          }),
         onToolCall: (call) => {
+          void import("@/lib/activity-log").then((log) => log.logToolCall(target.id, call));
           // Every call, not just the reads: a Blob that cannot see its own
           // failed attempt re-promises the same fix next turn. Arguments are
           // kept because the reported failure was a wrong field name, and the
@@ -2321,7 +2401,9 @@ export function App() {
         // Whitespace-only counts as nothing said, matching the check above.
         const unreachable = isTinfoilModel(model)
           ? "I couldn't reach Tinfoil. Check your connection and API key in Settings \u2192 Model."
-          : "I couldn't reach the local model. Check that Ollama is running in Settings \u2192 Model.";
+          : isAndroid()
+            ? "No model is set up yet. Add your Tinfoil key and pick a model in Settings \u2192 Model."
+            : "I couldn't reach the local model. Check that Ollama is running in Settings \u2192 Model.";
         if (text.trim() === "") {
           text = unreachable;
           appendSegment(text);
@@ -3259,9 +3341,89 @@ export function App() {
   };
 
   const composing = activeMode.kind !== "chat";
+  const phoneMain = phone && (phoneChat || composing);
+
+  // Android back: the innermost open thing closes first; on the list it exits.
+  useBackLayer(phone && phoneMain, () => {
+    setPhoneChat(false);
+    setMode({ kind: "chat" });
+  });
+  useBackLayer(phone && detailOpen && phoneMain, () => setDetailOpen(false));
+  useBackLayer(phone && settingsOpen, () => setSettingsOpen(false));
+  useBackLayer(phone && pluginsOpen, () => setPluginsOpen(false));
+  useBackLayer(phone && searchOpen, () => setSearchOpen(false));
+  useBackLayer(phone && pendingShare !== null, () => setPendingShare(null));
+
+  const shellRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!phone || shellRef.current === null) {
+      return;
+    }
+    return installLongPress(shellRef.current);
+  }, [phone]);
+
+  // Shares from other apps: the one that launched us, then any that arrive live.
+  useEffect(() => {
+    let alive = true;
+    void takePendingShare().then((content) => {
+      if (alive && content !== null) {
+        setPendingShare(content);
+      }
+    });
+    const stop = onShare((content) => setPendingShare(content));
+    return () => {
+      alive = false;
+      stop();
+    };
+  }, []);
+
+  /** Open the picked conversation with the share in its composer, unsent. */
+  const deliverShare = (target: ShareTarget) => {
+    const content = pendingShare;
+    setPendingShare(null);
+    if (content === null) {
+      return;
+    }
+    if (target.kind === "group") {
+      openGroup(target.id);
+    } else {
+      openConversation(target.id);
+    }
+    setPrefill({
+      conversation: target.kind === "group" ? groupConversationId(target.id) : target.id,
+      id: crypto.randomUUID(),
+      text: shareText(content),
+      files: content.files.map(
+        (file) =>
+          new File([file.bytes as BlobPart], file.name, {
+            type: file.mimeType,
+          }),
+      ),
+    });
+  };
+  const prefillFor = (conversation: string) =>
+    prefill !== null && prefill.conversation === conversation
+      ? {
+          prefill: { id: prefill.id, text: prefill.text, files: prefill.files },
+          onPrefillUsed: () => setPrefill(null),
+        }
+      : {};
+  const phoneBack = phone
+    ? {
+        onBack: () => {
+          setPhoneChat(false);
+          setDetailOpen(false);
+        },
+      }
+    : {};
 
   return (
-    <div className="app-shell">
+    <div
+      ref={shellRef}
+      className={
+        phone ? `app-shell app-shell-phone ${phoneMain ? "phone-main" : "phone-list"}` : "app-shell"
+      }
+    >
       <Sidebar
         agents={agents}
         selectedId={composing || selectedGroup !== undefined ? null : (agent?.id ?? null)}
@@ -3284,6 +3446,19 @@ export function App() {
         onDuplicate={duplicateBlob}
         onDelete={deleteBlob}
       />
+      {phone && composing ? (
+        <button
+          type="button"
+          className="icon-button phone-back phone-back-floating"
+          aria-label="Back to conversations"
+          onClick={() => {
+            setMode({ kind: "chat" });
+            setPhoneChat(false);
+          }}
+        >
+          <ChevronLeft size={22} strokeWidth={2} aria-hidden="true" />
+        </button>
+      ) : null}
       {activeMode.kind === "creator" ? (
         <CreatorPane
           // Remount when the palette hands over a different prefill.
@@ -3348,6 +3523,8 @@ export function App() {
               detailOpen={false}
               onToggleDetail={() => {}}
               onOpenSettings={openSettings}
+              {...phoneBack}
+              {...prefillFor(convoId)}
             />
           );
         })()
@@ -3379,8 +3556,10 @@ export function App() {
           detailOpen={detailOpen}
           onToggleDetail={() => setDetailOpen((open) => !open)}
           onOpenSettings={openSettings}
+          {...phoneBack}
+          {...prefillFor(agent.id)}
           teaching={teachState.phase === "recording"}
-          {...(canCapture()
+          {...(canCapture() && !isAndroid()
             ? {
                 onTeach: () => {
                   setTeachElapsed(0);
@@ -3551,6 +3730,15 @@ export function App() {
             onDeny={() => acpBridge.deny(acpBridge.pairing?.id ?? -1)}
           />
         </Suspense>
+      ) : null}
+      {pendingShare !== null && !onboarding ? (
+        <ShareSheet
+          content={pendingShare}
+          agents={agents}
+          groups={groups}
+          onPick={deliverShare}
+          onClose={() => setPendingShare(null)}
+        />
       ) : null}
       {onboarding ? (
         <Onboarding

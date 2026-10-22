@@ -1,8 +1,13 @@
+import { lazy, Suspense } from "react";
 import type { CardContext } from "@/components/cards/registry";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { withMentions } from "@/components/Mention";
 import type { Message } from "@/data/agents";
 import { splitMarkdownBlocks } from "@/lib/markdown-blocks";
+
+const SpeakButton = lazy(() =>
+  import("@/components/assistant/SpeakButton").then((module) => ({ default: module.SpeakButton })),
+);
 
 export function TextBubble({
   message,
@@ -65,6 +70,11 @@ export function TextBubble({
           <MarkdownContent text={block.text} palette={palette} />
         </div>
       ))}
+      {message.failed === true ? null : (
+        <Suspense fallback={null}>
+          <SpeakButton text={message.segments.map((segment) => segment.text).join("")} />
+        </Suspense>
+      )}
       {/* The turn did not finish, so the words above are an explanation and
           the only way on used to be retyping the question. */}
       {message.failed === true && (onRetry !== undefined || onDismiss !== undefined) ? (

@@ -9,6 +9,7 @@ import {
 } from "@kenkaiiii/gg-ai";
 import { z } from "zod";
 import { activityForTool, type BlobActivity } from "@/lib/activity";
+import { type ApprovalDecision, type ApprovalOutcome, gateTools } from "@/lib/approvals";
 import { ATTACHED_HEADER } from "@/lib/attachments";
 import {
   type MemoryAccess,
@@ -113,6 +114,8 @@ export interface ToolCallRecord {
   args: Record<string, unknown>;
   result: string;
   isError: boolean;
+  /** How the call was allowed, when the turn ran with a `gate`. */
+  approval?: ApprovalOutcome;
 }
 
 /** What a Blob may change about itself via the configure tool. */
@@ -738,6 +741,16 @@ export async function streamBlobTurn(options: {
   onConfigure: (patch: BlobConfigPatch) => void;
   /** Observes each completed tool call: drives the sim harness and, later, UI. */
   onToolCall?: (call: ToolCallRecord) => void;
+  /**
+   * Ask-before-acting (lib/approvals): decides each tool call before it runs.
+   * Wraps `execute` only, so the catalog's names and count are unchanged; a
+   * denial comes back to the model as the tool's result.
+   */
+  gate?: (call: {
+    name: string;
+    args: Record<string, unknown>;
+    signal: AbortSignal;
+  }) => Promise<ApprovalDecision>;
 }): Promise<string> {
   let conversation = options.messages;
   const scope = options.scope ?? "chat";
@@ -981,12 +994,15 @@ export async function streamBlobTurn(options: {
       }),
       subagent,
     ];
+    /** Approval outcomes by tool-call id, filled by the gate as each call is decided. */
+    const outcomes = new Map<string, ApprovalOutcome>();
+    const offered = options.gate === undefined ? tools : gateTools(tools, options.gate, outcomes);
     const loop = agentLoop(conversation, {
       provider: providerFor(options.model),
       model: options.model,
       ...(options.thinking === true ? {} : { thinking: NO_THINKING }),
       // `none` is the retry after a tool failure, not a routing decision.
-      ...(toolScope === "none" ? {} : { tools }),
+      ...(toolScope === "none" ? {} : { tools: offered }),
       maxTokens: MAX_REPLY_TOKENS,
       maxTurns: MAX_TOOL_ROUNDS,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1087,11 +1103,14 @@ export async function streamBlobTurn(options: {
       if (event.type === "tool_call_end") {
         const started = pending.get(event.toolCallId);
         pending.delete(event.toolCallId);
-        const record = {
+        const approval = outcomes.get(event.toolCallId);
+        outcomes.delete(event.toolCallId);
+        const record: ToolCallRecord = {
           name: started?.name ?? "unknown",
           args: started?.args ?? {},
           result: event.result,
           isError: event.isError,
+          ...(approval === undefined ? {} : { approval }),
         };
         gathered.push(record);
         // The result is in and the model is deciding what to do with it. Only

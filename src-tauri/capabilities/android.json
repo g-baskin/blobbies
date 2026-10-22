@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "android",
+  "description": "Android-only: the share-sheet inbox from the blobbies-android inline plugin (take_pending_share plus its `share` event listener). The plugin's Keystore commands are not granted here on purpose; secrets go through the secret_* commands, which enforce the name allowlist.",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": ["blobbies-android:default"]
+}

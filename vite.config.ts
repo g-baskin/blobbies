@@ -95,7 +95,10 @@ export default defineConfig({
 
   // Tauri ships its own webview: target it directly instead of legacy browsers.
   build: {
-    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
+    // Windows (WebView2) and Android (System WebView) are Chromium; macOS/Linux are WebKit.
+    target: ["windows", "android"].includes(process.env.TAURI_ENV_PLATFORM ?? "")
+      ? "chrome105"
+      : "safari15",
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },

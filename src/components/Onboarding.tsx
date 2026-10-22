@@ -7,6 +7,7 @@ import { MAX_USER_NAME_LENGTH } from "@/components/SettingsModal";
 import type { AgentShape, AvatarTone } from "@/data/agents";
 import { COMPOSIO_DASHBOARD_URL, composioSignedIn, forgetComposioSession } from "@/lib/composio";
 import { composioLogIn, OauthError } from "@/lib/composio-oauth";
+import { isAndroid } from "@/lib/mobile";
 import { requestNotificationPermission } from "@/lib/notify";
 import { getSecret, setSecret } from "@/lib/secrets";
 import { openExternal } from "@/lib/tauri";
@@ -38,6 +39,14 @@ const ALL_STEPS = [
 ] as const;
 
 type Step = (typeof ALL_STEPS)[number];
+
+/**
+ * The phone build has no desktop permissions to grant and no Composio CLI, so
+ * those screens drop out; Tinfoil stays (still skippable) as the only brain.
+ */
+const ANDROID_STEPS: readonly Step[] = ALL_STEPS.filter(
+  (step) => step !== "permissions" && step !== "composio",
+);
 
 /**
  * The three Blobs that travel through the flow: the content of the "one job"
@@ -216,8 +225,9 @@ export function Onboarding({
     });
   }, []);
 
-  const step: Step = ALL_STEPS[index] ?? "welcome";
-  const last = index === ALL_STEPS.length - 1;
+  const steps: readonly Step[] = isAndroid() ? ANDROID_STEPS : ALL_STEPS;
+  const step: Step = steps[index] ?? "welcome";
+  const last = index === steps.length - 1;
 
   // Move focus to the flow on mount and on every step, so the keyboard lands
   // on the new screen rather than wherever the old Next button was.
@@ -235,7 +245,7 @@ export function Onboarding({
     if (step === "timezone") {
       onTimezoneChange(timezoneChoice);
     }
-    setIndex((current) => Math.min(current + 1, ALL_STEPS.length - 1));
+    setIndex((current) => Math.min(current + 1, steps.length - 1));
   };
   const back = () => setIndex((current) => Math.max(current - 1, 0));
 
@@ -506,7 +516,9 @@ export function Onboarding({
       case "tinfoil":
         return (
           <div className="onboarding-step">
-            <h1 className="onboarding-heading">Want a bigger brain?</h1>
+            <h1 className="onboarding-heading">
+              {isAndroid() ? "Give your Blobs a brain" : "Want a bigger brain?"}
+            </h1>
             <p className="onboarding-blurb">
               Tinfoil runs bigger models in sealed hardware. Encrypted to the chip, unreadable by
               them or us.
@@ -562,7 +574,9 @@ export function Onboarding({
                   "That does not look like a key. Paste the whole thing, on its own."
                 ) : (
                   <>
-                    Kept in your OS keychain, never in app files. Keys live at{" "}
+                    {isAndroid()
+                      ? "Kept in your phone's secure storage, never in app files. Keys live at"
+                      : "Kept in your OS keychain, never in app files. Keys live at"}{" "}
                     <button
                       type="button"
                       className="onboarding-key-link"
@@ -804,8 +818,10 @@ export function Onboarding({
               they say so outright rather than leaving "Next with an empty
               field" to be inferred. */}
           {step === "tinfoil" && keyState !== "saved" ? (
-            <button type="button" className="onboarding-skip" onClick={next}>
-              Skip, I'll use the local model
+            // On Android the key step is the last one, where `next` clamps:
+            // Skip must finish the flow there or it is a dead button.
+            <button type="button" className="onboarding-skip" onClick={last ? onDone : next}>
+              {isAndroid() ? "Skip for now" : "Skip, I'll use the local model"}
             </button>
           ) : null}
           {/* Composio is the last step, where `next` clamps and would do

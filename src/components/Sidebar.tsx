@@ -5,6 +5,8 @@ import {
   Copy,
   Eye,
   EyeOff,
+  FolderInput,
+  FolderMinus,
   FolderPlus,
   Link,
   Pencil,
@@ -19,6 +21,7 @@ import {
 } from "lucide-react";
 import {
   type CSSProperties,
+  Fragment,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   useEffect,
@@ -29,6 +32,7 @@ import { BlobAvatar } from "@/components/BlobAvatar";
 import { type Agent, MAX_BLOB_NAME_LENGTH, MAX_BLOBS } from "@/data/agents";
 import { activityLabel, type BlobActivity } from "@/lib/activity";
 import { type Group, MAX_GROUP_MEMBERS } from "@/lib/groups";
+import { isPhoneLayout } from "@/lib/mobile";
 import { readPreference, writePreference } from "@/lib/preferences";
 import { isTauri } from "@/lib/tauri";
 import { formatAgentTime } from "@/lib/time";
@@ -379,11 +383,9 @@ export function Sidebar({
   };
 
   /** Apply a drop: pin, unpin into the ungrouped run, or move to a section. */
-  const {
-    drag,
-    start: startDrag,
-    consumeClick,
-  } = useBlobDrag((id, zone) => {
+  /** Phone: no pointer drag, so the context menu offers the moves. */
+  const coarsePointer = isPhoneLayout();
+  const dropBlob = (id: string, zone: string) => {
     if (zone === PIN_ZONE) {
       onUpdateBlob(id, { pinned: true });
       return;
@@ -416,7 +418,8 @@ export function Sidebar({
         saveCollapsedSections(collapsedSections.filter((candidate) => candidate !== name));
       }
     }
-  });
+  };
+  const { drag, start: startDrag, consumeClick } = useBlobDrag(dropBlob);
 
   /**
    * Reordering sections, on the same pointer-drag machinery as Blobs: a
@@ -506,7 +509,9 @@ export function Sidebar({
   const [resizing, setResizing] = useState(false);
   // A narrow window forces the rail; widening restores the user's own choice.
   const narrowWindow = useNarrowWindow();
-  const collapsed = userCollapsed || narrowWindow;
+  // On a phone the list IS the home screen, full width: every phone is under
+  // the 860px auto-collapse line, so without this it was a nameless icon rail.
+  const collapsed = !isPhoneLayout() && (userCollapsed || narrowWindow);
 
   const applyCollapsed = (next: boolean) => {
     setUserCollapsed(next);
@@ -1165,6 +1170,28 @@ export function Sidebar({
                           () => onDuplicate(target.id),
                         )}
                     <hr className="context-menu-separator" />
+                    {/* Touch has no drag, so the menu moves Blobs between
+                        groups instead (same rules as a drop). */}
+                    {coarsePointer
+                      ? sections
+                          .filter((name) => name !== target.section)
+                          .map((name) => (
+                            <Fragment key={name}>
+                              {item(
+                                `Move to ${name}`,
+                                <FolderInput size={15} strokeWidth={1.8} aria-hidden="true" />,
+                                () => dropBlob(target.id, zoneFor(name)),
+                              )}
+                            </Fragment>
+                          ))
+                      : null}
+                    {coarsePointer && target.section !== undefined && target.section !== ""
+                      ? item(
+                          "Remove from group",
+                          <FolderMinus size={15} strokeWidth={1.8} aria-hidden="true" />,
+                          () => dropBlob(target.id, UNGROUPED_ZONE),
+                        )
+                      : null}
                     {/* Also here, not only on a group's own menu: with no groups
                         yet there is nothing to right-click, and this is the
                         only path to the first one. It is a keyboard path too —

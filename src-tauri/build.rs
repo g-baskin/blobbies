@@ -29,8 +29,24 @@ const MODELS: [(&str, &str, &str); 2] = [
 
 fn main() {
     fetch_models();
-    build_acp_relay();
-    tauri_build::build();
+    // Android/iOS ship no sidecar: tauri.android.conf.json drops externalBin.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "android" && target_os != "ios" {
+        build_acp_relay();
+    }
+    // The Android-only inline plugin (src/android_bridge.rs). Only the share
+    // inbox and its event listener are exposed to the webview; the Keystore
+    // commands (secretGet/Set/Delete) are deliberately left out so JS can only
+    // reach secrets through `secret_*` in secrets.rs, behind ALLOWED_NAMES.
+    let attributes = tauri_build::Attributes::new().plugin(
+        "blobbies-android",
+        tauri_build::InlinedPlugin::new()
+            .commands(&["take_pending_share", "register_listener", "remove_listener"])
+            .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+    );
+    if let Err(error) = tauri_build::try_build(attributes) {
+        panic!("tauri-build failed: {error:#}");
+    }
 }
 
 /// Build the ACP relay into the `externalBin` path Tauri expects.

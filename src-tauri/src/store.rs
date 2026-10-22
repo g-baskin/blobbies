@@ -63,7 +63,14 @@ const ROOT_SLICES: [&str; 7] = [
 
 /// Slices that live inside a Blob directory. `recap` is the rolling summary of
 /// the conversation's compacted head (see `lib/recap.ts`).
-const BLOB_SLICES: [&str; 5] = ["config", "routines", "transcript", "runs", "recap"];
+const BLOB_SLICES: [&str; 6] = [
+    "config",
+    "routines",
+    "transcript",
+    "runs",
+    "recap",
+    "activity",
+];
 
 /// Slices that live inside a group-chat directory.
 const GROUP_SLICES: [&str; 2] = ["transcript", "recap"];
@@ -265,10 +272,13 @@ fn list_blob_ids(data_root: &Path) -> Vec<String> {
 /// runs from `startup_maintenance` instead.
 pub(crate) fn data_root(app: &tauri::AppHandle) -> Result<PathBuf> {
     use tauri::Manager;
-    app.path()
-        .home_dir()
-        .map(|dir| dir.join(".blobbies"))
-        .map_err(|error| Error::Io(error.to_string()))
+    // Android has no user-visible home; the app-private data dir is the only
+    // place an app may write.
+    #[cfg(target_os = "android")]
+    let root = app.path().app_data_dir().map(|dir| dir.join("blobbies"));
+    #[cfg(not(target_os = "android"))]
+    let root = app.path().home_dir().map(|dir| dir.join(".blobbies"));
+    root.map_err(|error| Error::Io(error.to_string()))
 }
 
 /// Bring a pre-`~/.blobbies` install across, once, at startup.
@@ -278,6 +288,7 @@ pub(crate) fn data_root(app: &tauri::AppHandle) -> Result<PathBuf> {
 /// is still there to retry from. An already-present root is what makes this
 /// once — without that check a user who deleted something would find it
 /// restored on the next launch.
+#[cfg(not(target_os = "android"))]
 fn migrate_legacy_root(app: &tauri::AppHandle, root: &Path) {
     use tauri::Manager;
     if root.exists() {
@@ -327,6 +338,7 @@ pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 /// before any command can touch the store.
 pub(crate) fn startup_maintenance(app: &tauri::AppHandle) {
     if let Ok(root) = data_root(app) {
+        #[cfg(not(target_os = "android"))]
         migrate_legacy_root(app, &root);
         purge_trash_dir(&root);
     }

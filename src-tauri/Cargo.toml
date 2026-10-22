@@ -39,15 +39,6 @@ tauri-plugin-http = "2.5.9"
 # OS notifications for runs that finish or need the user while the app is
 # in the background.
 tauri-plugin-notification = "2.3.3"
-tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
-# OS-native secret storage (macOS Keychain / Windows Credential Store /
-# Linux Secret Service) for the Tinfoil API key — never plaintext JSON.
-keyring = { version = "3.6", features = [
-    "apple-native",
-    "windows-native",
-    "sync-secret-service",
-] }
 # On-device OCR for images and scanned PDFs. It runs here rather than in the
 # webview so that no CSP directive has to be loosened for WebAssembly, and so
 # a decoder chewing untrusted bytes sits outside the page holding the user's
@@ -88,6 +79,19 @@ getrandom = "0.3.4"
 # itself unavailable there instead.
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 xcap = "0.9.8"
+
+# Desktop-only: no updater/keychain on Android/iOS (secrets go through the
+# Android Keystore bridge there).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.10.1"
+# OS-native secret storage (macOS Keychain / Windows Credential Store /
+# Linux Secret Service) for the Tinfoil API key — never plaintext JSON.
+keyring = { version = "3.6", features = [
+    "apple-native",
+    "windows-native",
+    "sync-secret-service",
+] }
 
 [lints.rust]
 # Deny, not forbid: notifications.rs needs one audited `unsafe` (deref of the

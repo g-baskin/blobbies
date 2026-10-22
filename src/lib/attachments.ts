@@ -43,6 +43,8 @@ export interface Attachment {
    * folder, so clicking the bubble can reveal that file instead of this copy.
    */
   path?: string;
+  /** Home-folder name of the downscaled photo a vision model is sent (lib/vision). */
+  vision?: string;
 }
 
 /**
@@ -174,7 +176,9 @@ async function readText(
   file: File,
   /** The thumbnail the composer already made; re-rendering it wastes a decode. */
   madePreview?: string,
-): Promise<{ text: string; extracted?: true; preview?: string } | { reason: string }> {
+): Promise<
+  { text: string; extracted?: true; preview?: string; vision?: string } | { reason: string }
+> {
   // Only the magic number is read up front: a dropped video must hit its size
   // cap before anything allocates a buffer the size of the whole file.
   const head = new Uint8Array(await file.slice(0, IMAGE_MAGIC_BYTES).arrayBuffer());
@@ -191,6 +195,7 @@ async function readText(
     // is rendered.
     const passed = madePreview?.startsWith("data:image/") === true ? madePreview : undefined;
     const preview = passed ?? (await imagePreview(bytes));
+    const vision = await (await import("@/lib/vision")).downscaleImage(bytes);
     let text: string;
     try {
       text = await ocrImage(bytes);
@@ -214,6 +219,7 @@ async function readText(
           ? `The user attached the image ${attachmentName(file.name)}. It contains no readable text, so there is nothing here to quote. The models in this app cannot see images.`
           : clip(text, "image's text"),
       ...(preview === undefined ? {} : { preview }),
+      ...(vision === undefined ? {} : { vision }),
     };
   }
 
@@ -363,6 +369,19 @@ export async function saveAttachments(
       continue;
     }
     taken.add(name);
+    // The photo a vision model sees, beside the OCR text. Best-effort: without
+    // it the text path still works.
+    let vision: string | undefined;
+    if ("vision" in result && result.vision !== undefined) {
+      const sidecar = uniqueName(`${name}.vision.b64`, taken);
+      try {
+        await home.write(sidecar, result.vision);
+        taken.add(sidecar);
+        vision = sidecar;
+      } catch {
+        // Too big or no space: OCR only.
+      }
+    }
     // Size of what was actually written, so the chip and the Files panel agree
     // (they differ for a PDF, and for any non-ASCII text file).
     saved.push({
@@ -372,6 +391,7 @@ export async function saveAttachments(
       // names our storage detail rather than their file.
       ...(name === label ? {} : { label }),
       ...(result.preview === undefined ? {} : { preview: result.preview }),
+      ...(vision === undefined ? {} : { vision }),
     });
   }
   if (files.length > MAX_ATTACHMENTS) {

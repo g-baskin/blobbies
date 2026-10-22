@@ -1,4 +1,6 @@
 mod acp;
+#[cfg(target_os = "android")]
+mod android_bridge;
 mod capture;
 mod commands;
 mod error;
@@ -13,6 +15,7 @@ mod shell;
 mod skills;
 mod store;
 mod textutil;
+#[cfg(desktop)]
 mod tray;
 
 pub use error::Error;
@@ -30,11 +33,18 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_notification::init())
-        // Updater: checks this repo's GitHub Releases for a newer version and
-        // installs it in place. Process: relaunches the app after an update.
+        .plugin(tauri_plugin_notification::init());
+    // Android-native bridge: Keystore secrets and the share-sheet inbox.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_bridge::init());
+    // Updater: checks this repo's GitHub Releases for a newer version and
+    // installs it in place. Process: relaunches the app after an update.
+    // Desktop only; neither plugin supports mobile.
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = builder
         .invoke_handler(tauri::generate_handler![
             commands::greet,
             commands::ollama_installed,
@@ -82,6 +92,7 @@ pub fn run() {
             // Best-effort: an app with no tray icon is a smaller failure than
             // no app at all, and every tray action has an equivalent inside
             // the window.
+            #[cfg(desktop)]
             if let Err(error) = tray::init(app.handle()) {
                 eprintln!("could not create the tray icon: {error}");
             }

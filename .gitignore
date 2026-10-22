@@ -14,7 +14,10 @@ coverage
 # Rust / Tauri
 src-tauri/target
 src-tauri/acp-relay/target
-src-tauri/gen
+# Generated schemas stay ignored; the Android project is source (it holds the
+# Kotlin plugin, manifest permissions and share intent-filters), so it is kept.
+src-tauri/gen/*
+!src-tauri/gen/android/
 
 # Secrets — never commit these
 .env

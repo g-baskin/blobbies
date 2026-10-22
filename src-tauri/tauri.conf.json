@@ -40,7 +40,7 @@
         "frame-ancestors": "'none'"
       },
       "freezePrototype": true,
-      "capabilities": ["default"]
+      "capabilities": ["default", "desktop", "android"]
     }
   },
   "bundle": {

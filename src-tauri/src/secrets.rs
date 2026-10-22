@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 /// change it and every existing user's saved API key becomes unreachable —
 /// present in Keychain Access, invisible to the app, which then behaves as
 /// though they never entered one.
+#[cfg(not(target_os = "android"))]
 const SERVICE: &str = "com.blobbies.app";
 
 /// Every secret name the webview may read or write. Default-deny.
@@ -40,6 +41,7 @@ fn ensure_allowed(name: &str) -> Result<()> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn entry_for(name: &str) -> Result<keyring::Entry> {
     ensure_allowed(name)?;
     keyring::Entry::new(SERVICE, name).map_err(|error| Error::Io(error.to_string()))
@@ -68,7 +70,7 @@ fn entry_for(name: &str) -> Result<keyring::Entry> {
 ///
 /// While active, saving or removing a key in Settings only edits the map: it
 /// lasts for the session and leaves the real keychain entry untouched.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(target_os = "android")))]
 mod dev {
     use std::collections::HashMap;
     use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -137,6 +139,17 @@ mod dev {
 #[tauri::command]
 pub(crate) fn secret_get(name: &str) -> Result<Option<String>> {
     ensure_allowed(name)?;
+    backend_get(name)
+}
+
+/// Android: Keystore-backed storage in the `blobbies-android` plugin.
+#[cfg(target_os = "android")]
+fn backend_get(name: &str) -> Result<Option<String>> {
+    crate::android_bridge::secret_get(name)
+}
+
+#[cfg(not(target_os = "android"))]
+fn backend_get(name: &str) -> Result<Option<String>> {
     #[cfg(debug_assertions)]
     if dev::active() {
         return Ok(dev::get(name));
@@ -159,6 +172,16 @@ pub(crate) fn secret_set(name: &str, value: &str) -> Result<()> {
             max: MAX_SECRET_BYTES,
         });
     }
+    backend_set(name, value)
+}
+
+#[cfg(target_os = "android")]
+fn backend_set(name: &str, value: &str) -> Result<()> {
+    crate::android_bridge::secret_set(name, value)
+}
+
+#[cfg(not(target_os = "android"))]
+fn backend_set(name: &str, value: &str) -> Result<()> {
     #[cfg(debug_assertions)]
     if dev::active() {
         dev::set(name, value);
@@ -172,6 +195,16 @@ pub(crate) fn secret_set(name: &str, value: &str) -> Result<()> {
 #[tauri::command]
 pub(crate) fn secret_delete(name: &str) -> Result<()> {
     ensure_allowed(name)?;
+    backend_delete(name)
+}
+
+#[cfg(target_os = "android")]
+fn backend_delete(name: &str) -> Result<()> {
+    crate::android_bridge::secret_delete(name)
+}
+
+#[cfg(not(target_os = "android"))]
+fn backend_delete(name: &str) -> Result<()> {
     #[cfg(debug_assertions)]
     if dev::active() {
         dev::delete(name);
