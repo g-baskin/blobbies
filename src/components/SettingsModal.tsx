@@ -92,6 +92,8 @@ interface SettingsModalProps {
   onReplayOnboarding: () => void;
   /** The Editors (ACP) section, rendered under Plugins by the app. */
   acp: ReactNode;
+  /** The "App actions" section: which apps run without asking. */
+  appApprovals: ReactNode;
   onClose: () => void;
 }
 
@@ -319,6 +321,7 @@ export function SettingsModal({
   onModelChange,
   onReplayOnboarding,
   acp,
+  appApprovals,
   onClose,
 }: SettingsModalProps) {
   // The phone build has no updater, Ollama, ffmpeg, Composio CLI or editors.
@@ -782,6 +785,8 @@ export function SettingsModal({
                       </>
                     ) : null}
                   </div>
+
+                  {appApprovals}
 
                   {acp}
                 </>

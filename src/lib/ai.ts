@@ -9,6 +9,7 @@ import {
 } from "@kenkaiiii/gg-ai";
 import { z } from "zod";
 import { activityForTool, type BlobActivity } from "@/lib/activity";
+import type { ApprovalHost } from "@/lib/app-approval";
 import { type ApprovalDecision, type ApprovalOutcome, gateTools } from "@/lib/approvals";
 import { ATTACHED_HEADER } from "@/lib/attachments";
 import {
@@ -699,6 +700,11 @@ export async function streamBlobTurn(options: {
    */
   hasConnectedApps?: boolean;
   /**
+   * Where an app action that could change something asks the user first.
+   * Absent means no way to ask, and such actions are refused, never run.
+   */
+  appApprovals?: ApprovalHost;
+  /**
    * Token usage for one agent loop. Fired once per loop, so a turn that
    * retries or runs a rescue round reports more than once — the caller sums.
    */
@@ -874,6 +880,12 @@ export async function streamBlobTurn(options: {
   let pendingAsk: PendingAsk | null = null;
 
   /**
+   * Apps the user allowed "for this task", for the whole turn: the catalog is
+   * rebuilt per loop, and a retry must not ask about the same app again.
+   */
+  const taskAllowedApps = new Set<string>();
+
+  /**
    * Text the model finished saying before each tool call ("Let me search for
    * that."). Each entry is emitted as its own bubble the moment it is banked,
    * and kept for the whole turn — including across the rescue round — so
@@ -929,7 +941,15 @@ export async function streamBlobTurn(options: {
     // only once something is connected: with no account the model would spend
     // rounds discovering there is nothing to call. Deliberately outside the
     // router's web verdict — see the `tools` line below.
-    const appTools = options.hasConnectedApps === true ? makeComposioTools(options.model) : [];
+    const appTools =
+      options.hasConnectedApps === true
+        ? makeComposioTools(
+            options.model,
+            options.appApprovals === undefined
+              ? undefined
+              : { host: options.appApprovals, taskAllowed: taskAllowedApps },
+          )
+        : [];
     // One catalog for every turn (2026-08-20, owner's call): a Blob's
     // capabilities must not depend on who started the turn — "spawn up 3
     // bots", "read that file", "run that command" are chat requests as much
@@ -996,7 +1016,18 @@ export async function streamBlobTurn(options: {
     ];
     /** Approval outcomes by tool-call id, filled by the gate as each call is decided. */
     const outcomes = new Map<string, ApprovalOutcome>();
-    const offered = options.gate === undefined ? tools : gateTools(tools, options.gate, outcomes);
+    // Connected-app actions already ask through lib/app-approval's dialog when
+    // a host is wired up, so the in-chat gate leaves `app_run_tool` to it —
+    // one question per action, never two.
+    const offered =
+      options.gate === undefined
+        ? tools
+        : gateTools(
+            tools,
+            options.gate,
+            outcomes,
+            options.appApprovals === undefined ? undefined : new Set(["app_run_tool"]),
+          );
     const loop = agentLoop(conversation, {
       provider: providerFor(options.model),
       model: options.model,

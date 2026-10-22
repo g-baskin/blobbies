@@ -947,6 +947,38 @@ select:focus:not(:focus-visible) {
   gap: 8px;
 }
 
+/* A Blob asking to act in one of the user's apps (AppApprovalDialog). Wider
+   than a plain confirm: it carries the exact details that would be sent. */
+.confirm-dialog.approval-dialog {
+  max-width: 520px;
+}
+
+.approval-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.approval-args {
+  max-height: 240px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 10px;
+  background: rgba(128, 128, 140, 0.16);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.approval-actions {
+  flex-wrap: wrap;
+}
+
 /* Double class outranks the later-defined .modal-button base/hover rules. */
 .modal-button.confirm-danger {
   background: var(--status-err);
@@ -2486,9 +2518,25 @@ a.modal-button {
 
 .plugin-row {
   display: flex;
+  flex-wrap: wrap;
+  /* A row stretched by its neighbour's error line keeps its content at the
+     top, level with the neighbour, rather than drifting to the middle. */
+  align-content: flex-start;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* Why a connect failed, under the row that failed (PluginsModal). Wraps in
+   full: the reason is the only thing that tells the user what to do next. */
+.plugin-error {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+  padding-inline-start: 8px;
+  color: var(--status-err);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .plugin-open {

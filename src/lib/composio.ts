@@ -281,6 +281,44 @@ export async function connectedAppNames(): Promise<string[]> {
   return slugs.map((slug) => catalog.find((plugin) => plugin.id === slug)?.name ?? slug);
 }
 
+/** Longest reason quoted from Composio in a message to the user. */
+const MAX_REASON_CHARS = 300;
+
+/**
+ * Composio's own explanation, from a reply that did not do what was asked:
+ * its `error`, else the `message` it gives per request or overall.
+ *
+ * Without this the user only ever learned *that* a connect failed. Plain
+ * text, trimmed and capped, because it goes on screen as-is.
+ */
+function composioReason(raw: string): string {
+  let reply: unknown;
+  try {
+    reply = JSON.parse(raw);
+  } catch {
+    return raw.trim().replace(/\s+/g, " ").slice(0, MAX_REASON_CHARS);
+  }
+  const found: string[] = [];
+  const visit = (value: unknown, depth: number) => {
+    if (depth > 4 || value === null || typeof value !== "object") {
+      return;
+    }
+    for (const [key, entry] of Object.entries(value)) {
+      if (
+        (key === "error" || key === "message") &&
+        typeof entry === "string" &&
+        entry.trim() !== ""
+      ) {
+        found.push(entry.trim());
+      } else {
+        visit(entry, depth + 1);
+      }
+    }
+  };
+  visit(reply, 0);
+  return [...new Set(found)].join(" ").replace(/\s+/g, " ").slice(0, MAX_REASON_CHARS);
+}
+
 /** Anything that looks like the consent link Composio wants opened. */
 const URL_IN_TEXT = /https:\/\/[^\s"'\\]+/;
 
@@ -296,7 +334,12 @@ export async function startComposioLink(toolkit: string, alias = ""): Promise<st
   });
   const found = URL_IN_TEXT.exec(raw)?.[0];
   if (found === undefined) {
-    throw new Error("Composio did not return a link to open.");
+    const reason = composioReason(raw);
+    throw new Error(
+      reason === ""
+        ? "Composio did not return a link to open."
+        : `Composio did not return a link to open: ${reason}`,
+    );
   }
   // Trailing punctuation from surrounding JSON must not ride along into the
   // browser.

@@ -132,4 +132,28 @@ describe("gateTools", () => {
     expect(outcomes.get("c1")).toBe("denied");
     expect(gated?.name).toBe("app_run_tool");
   });
+
+  it("leaves tools another approval path guards unwrapped, so nobody is asked twice", async () => {
+    const make = (name: string) =>
+      ({
+        name,
+        description: "",
+        parameters: {} as never,
+        execute: vi.fn(async () => "ran"),
+      }) as unknown as AgentTool;
+    const app = make("app_run_tool");
+    const spawn = make("spawn_blob");
+    const gate = vi.fn(async () => ({ allowed: false, outcome: "denied" as const }));
+    const [gatedApp, gatedSpawn] = gateTools(
+      [app, spawn],
+      gate,
+      new Map(),
+      new Set(["app_run_tool"]),
+    );
+    expect(gatedApp).toBe(app);
+    const context = { toolCallId: "c2", signal: new AbortController().signal };
+    expect(await gatedApp?.execute({ tool: "GMAIL_SEND_EMAIL" } as never, context)).toBe("ran");
+    expect(String(await gatedSpawn?.execute({} as never, context))).toContain("did not approve");
+    expect(gate).toHaveBeenCalledTimes(1);
+  });
 });

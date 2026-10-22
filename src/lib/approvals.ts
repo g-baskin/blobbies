@@ -294,20 +294,26 @@ export function gateTools(
     signal: AbortSignal;
   }) => Promise<ApprovalDecision>,
   outcomes: Map<string, ApprovalOutcome>,
+  /** Tools another approval path already guards; passed through unwrapped. */
+  exempt?: ReadonlySet<string>,
 ): AgentTool[] {
-  return tools.map((tool) => ({
-    ...tool,
-    // The wait for the user must not be cut short by the loop's own tool
-    // timeout (5 minutes by default); the gate has its own.
-    timeoutMs: (tool.timeoutMs ?? 300_000) + APPROVAL_TIMEOUT_MS,
-    execute: async (args, context) => {
-      const record = (args ?? {}) as Record<string, unknown>;
-      const decision = await gate({ name: tool.name, args: record, signal: context.signal });
-      outcomes.set(context.toolCallId, decision.outcome);
-      if (!decision.allowed) {
-        return deniedResult(tool.name);
-      }
-      return tool.execute(args, context);
-    },
-  }));
+  return tools.map((tool) =>
+    exempt?.has(tool.name) === true
+      ? tool
+      : {
+          ...tool,
+          // The wait for the user must not be cut short by the loop's own tool
+          // timeout (5 minutes by default); the gate has its own.
+          timeoutMs: (tool.timeoutMs ?? 300_000) + APPROVAL_TIMEOUT_MS,
+          execute: async (args, context) => {
+            const record = (args ?? {}) as Record<string, unknown>;
+            const decision = await gate({ name: tool.name, args: record, signal: context.signal });
+            outcomes.set(context.toolCallId, decision.outcome);
+            if (!decision.allowed) {
+              return deniedResult(tool.name);
+            }
+            return tool.execute(args, context);
+          },
+        },
+  );
 }

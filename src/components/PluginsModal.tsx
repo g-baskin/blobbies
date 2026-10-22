@@ -310,14 +310,7 @@ export function PluginsModal({ installed, onSetInstalled, onClose }: PluginsModa
           <PluginTile plugin={plugin} />
           <span className="plugin-text">
             <span className="plugin-name">{plugin.name}</span>
-            {/* The failure replaces the description on the row that caused it:
-                shown anywhere else, a missing CLI and an abandoned browser tab
-                both look like a button that did nothing. */}
-            <span className="plugin-desc">
-              {connectError !== "" && connecting === "" && failedId === plugin.id
-                ? connectError
-                : plugin.description}
-            </span>
+            <span className="plugin-desc">{plugin.description}</span>
           </span>
         </button>
         {/* Nothing until the probe answers: rendering Connect first meant every
@@ -328,6 +321,15 @@ export function PluginsModal({ installed, onSetInstalled, onClose }: PluginsModa
         ) : (
           renderConnect(plugin, "modal-button plugin-add", () => void connect(plugin))
         )}
+        {/* On its own full-width line, in full and in red, on the row that
+            caused it. It used to replace the one-line description, cut off at
+            the first few words in grey, so a failed connect looked exactly
+            like a button that did nothing. */}
+        {connectError !== "" && connecting === "" && failedId === plugin.id ? (
+          <p className="plugin-error" role="alert">
+            {connectError}
+          </p>
+        ) : null}
       </div>
     );
   };
