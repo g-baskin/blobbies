@@ -251,6 +251,22 @@ function flushAll(): void {
   pendingValues.clear();
 }
 
+/** Write every debounced value now and wait for the disk writes (sync calls this first). */
+export async function flushPendingWrites(): Promise<void> {
+  const entries = [...pendingWrites.keys()].map((key) => [key, pendingValues.get(key)] as const);
+  await Promise.all(entries.map(([key, value]) => flushWrite(key, value)));
+}
+
+/** Generic slice read, for sync. */
+export async function readSlice(key: string): Promise<unknown> {
+  return rawRead(key);
+}
+
+/** Generic slice write straight to disk (cancels a pending debounce), for sync. */
+export async function writeSliceNow(key: string, value: unknown): Promise<void> {
+  await flushWrite(key, value);
+}
+
 if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", flushAll);
 }

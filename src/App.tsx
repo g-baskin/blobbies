@@ -85,6 +85,8 @@ import type { SearchResult } from "@/lib/search";
 import { listSkills, type Skill, skillLine } from "@/lib/skills";
 import { playChime } from "@/lib/sound";
 import * as store from "@/lib/store";
+import { syncConfiguredFlag } from "@/lib/sync/flag";
+import { loadSync, useSyncWiring } from "@/lib/sync/useSyncWiring";
 import { openExternal } from "@/lib/tauri";
 import * as teach from "@/lib/teach";
 import { isTinfoilModel, TINFOIL_MODEL_PREFIX } from "@/lib/tinfoil-model";
@@ -103,6 +105,11 @@ import "./phone.css";
 
 // Both only exist behind the Editors (ACP) toggle, which most users never
 // touch — so they stay out of the startup chunk (scripts/bundle-budget.mjs).
+const SyncPairDialog = lazy(() =>
+  import("@/components/SyncPairDialog").then((m) => ({ default: m.SyncPairDialog })),
+);
+/** Sync stays out of the startup chunk; a missing/broken service never blocks hydration. */
+
 const AcpPairingDialog = lazy(() =>
   import("@/components/AcpPairingDialog").then((module) => ({ default: module.AcpPairingDialog })),
 );
@@ -579,6 +586,20 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // Pull the other device's state first, so a freshly paired phone paints
+      // the computer's Blobs on its first hydration.
+      // Only when sync is on: otherwise startup neither loads the service nor
+      // touches the keychain.
+      if (syncConfiguredFlag()) {
+        try {
+          await (await loadSync()).initSync();
+        } catch (error) {
+          console.warn("sync init failed", error);
+        }
+      }
+      if (cancelled) {
+        return;
+      }
       const [roster, settings, shared, savedGroups, acpSettings] = await Promise.all([
         store.loadRoster(),
         store.loadSettings(),
@@ -3490,6 +3511,12 @@ export function App() {
     };
   }, []);
 
+  // Sync: auto-sync, the "updates arrived" banner and pair-link confirmation
+  // (src/lib/sync/useSyncWiring.ts). Auto-reload only when nothing is in flight.
+  const { syncRefresh, refreshFromSync, pairPrompt, setPairPrompt, acceptPair } = useSyncWiring(
+    () => activeTurns.current.size > 0,
+  );
+
   /** Open the picked conversation with the share in its composer, unsent. */
   const deliverShare = (target: ShareTarget) => {
     const content = pendingShare;
@@ -3868,6 +3895,23 @@ export function App() {
             request={acpBridge.pairing}
             onApprove={() => acpBridge.approve(acpBridge.pairing?.id ?? -1)}
             onDeny={() => acpBridge.deny(acpBridge.pairing?.id ?? -1)}
+          />
+        </Suspense>
+      ) : null}
+      {syncRefresh ? (
+        <div className="sync-banner" role="status">
+          <span>New updates from your other device</span>
+          <button type="button" className="modal-button" onClick={refreshFromSync}>
+            Refresh
+          </button>
+        </div>
+      ) : null}
+      {pairPrompt !== null ? (
+        <Suspense fallback={null}>
+          <SyncPairDialog
+            prompt={pairPrompt}
+            onConnect={acceptPair}
+            onClose={() => setPairPrompt(null)}
           />
         </Suspense>
       ) : null}

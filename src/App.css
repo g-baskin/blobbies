@@ -6529,3 +6529,67 @@ a.modal-button {
     animation: none;
   }
 }
+
+/* Sync */
+.sync-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  margin-top: 10px;
+}
+.sync-pairing {
+  align-items: center;
+  text-align: center;
+}
+.sync-qr {
+  width: 220px;
+  height: 220px;
+  background: #fff;
+  border-radius: 8px;
+}
+.sync-warning,
+.sync-error {
+  color: var(--danger, #c0392b);
+}
+.sync-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sync-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: sync-spin 0.8s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sync-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 16px;
+  background: var(--surface-modal-card);
+  border-radius: 999px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+.sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

@@ -1,4 +1,4 @@
-import { CircleArrowDown, Cpu, Plug, Settings, X } from "lucide-react";
+import { CircleArrowDown, Cpu, Plug, RefreshCw, Settings, X } from "lucide-react";
 import {
   Fragment,
   lazy,
@@ -38,6 +38,9 @@ import {
 } from "@/lib/updater";
 import { useExitAnimation } from "@/lib/useExitAnimation";
 
+const SyncSettings = lazy(() =>
+  import("@/components/SyncSettings").then((m) => ({ default: m.SyncSettings })),
+);
 const AssistantSettings = lazy(() =>
   import("@/components/assistant/AssistantSettings").then((module) => ({
     default: module.AssistantSettings,
@@ -72,7 +75,7 @@ function updateBlurb(update: UpdateState): string {
 }
 
 /** The dialog's tabs; also what the search palette can jump straight to. */
-export type SettingsTab = "general" | "model" | "plugins" | "updates";
+export type SettingsTab = "general" | "model" | "plugins" | "sync" | "updates";
 
 interface SettingsModalProps {
   /** Tab to open on, for callers that jump to one. Defaults to General. */
@@ -560,6 +563,15 @@ export function SettingsModal({
             <Plug size={15} strokeWidth={1.8} aria-hidden="true" />
             Plugins
           </button>
+          <button
+            type="button"
+            className={tab === "sync" ? "rail-item rail-item-active" : "rail-item"}
+            aria-current={tab === "sync" ? "true" : undefined}
+            onClick={() => setTab("sync")}
+          >
+            <RefreshCw size={15} strokeWidth={1.8} aria-hidden="true" />
+            Sync
+          </button>
           {android ? null : (
             <button
               type="button"
@@ -1031,6 +1043,15 @@ export function SettingsModal({
                   </PillSelect>
                 </div>
               </div>
+            </>
+          ) : null}
+
+          {tab === "sync" ? (
+            <>
+              <h2 className="modal-title">Sync</h2>
+              <Suspense fallback={null}>
+                <SyncSettings />
+              </Suspense>
             </>
           ) : null}
 

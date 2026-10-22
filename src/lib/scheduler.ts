@@ -1,5 +1,7 @@
 import type { Routine } from "@/data/agents";
+import { isAndroid } from "@/lib/mobile";
 import { nextFireTime, scheduleBudget } from "@/lib/schedule";
+import { syncConfiguredFlag } from "@/lib/sync/flag";
 import { isTauri } from "@/lib/tauri";
 import {
   anyListenerMatches,
@@ -84,6 +86,10 @@ const TICK_EVENT = "scheduler://tick";
  * loses the claim. The next tick picks up the next due routine.
  */
 export async function tick(host: SchedulerHost, now: number = Date.now()): Promise<boolean> {
+  // A synced phone leaves routines to the computer, so they never fire twice.
+  if (isAndroid() && syncConfiguredFlag()) {
+    return false;
+  }
   for (const [blobId, routines] of host.routines()) {
     // Its own chat is mid-turn, so its routine waits for the next tick rather
     // than queueing behind work the user is watching.

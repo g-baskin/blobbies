@@ -523,3 +523,25 @@ describe("startScheduler (native heartbeat)", () => {
     stop();
   });
 });
+
+describe("sync gate", () => {
+  afterEach(() => {
+    vi.doUnmock("@/lib/mobile");
+    vi.resetModules();
+  });
+
+  it("does not fire routines on Android while sync is configured", async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/mobile", () => ({ isAndroid: () => true }));
+    const { tick: gatedTick } = await import("@/lib/scheduler");
+    const { setSyncConfiguredFlag } = await import("@/lib/sync/flag");
+    const h = makeHost({ b1: [routine({ nextRunAt: 5 })] });
+    const host = h.host;
+    setSyncConfiguredFlag(true);
+    expect(await gatedTick(host, 10 * HOUR)).toBe(false);
+    expect(h.fired).toEqual([]);
+    setSyncConfiguredFlag(false);
+    await gatedTick(host, 10 * HOUR);
+    expect(h.fired.length).toBe(1);
+  });
+});

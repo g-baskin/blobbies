@@ -19,6 +19,8 @@ vi.mock("@/lib/mobile", () => ({
     phone.pending = null;
     return next;
   },
+  takePendingPairLink: async () => null,
+  onPairLink: () => () => {},
   onShare: (callback: (content: SharedContent) => void) => {
     phone.listener = callback;
     return () => {
