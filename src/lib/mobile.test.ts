@@ -18,7 +18,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 let tauri = true;
 vi.mock("@/lib/tauri", () => ({ isTauri: () => tauri }));
 
-const { onShare, takePendingShare } = await import("@/lib/mobile");
+const { onPairLink, onShare, takePendingPairLink, takePendingShare } = await import("@/lib/mobile");
 
 const ANDROID_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36";
 
@@ -77,6 +77,45 @@ describe("onShare", () => {
   it("is a no-op off Android", () => {
     tauri = false;
     onShare(vi.fn())();
+    expect(addPluginListener).not.toHaveBeenCalled();
+  });
+});
+
+describe("takePendingPairLink", () => {
+  it("returns the plugin's url once", async () => {
+    invoke.mockResolvedValue({ url: "blobbies://pair#abc" });
+    expect(await takePendingPairLink()).toBe("blobbies://pair#abc");
+    expect(invoke).toHaveBeenCalledWith("plugin:blobbies-android|take_pending_pair_link");
+    invoke.mockResolvedValue({ url: null });
+    expect(await takePendingPairLink()).toBeNull();
+  });
+
+  it("is null off Android without calling the plugin", async () => {
+    tauri = false;
+    expect(await takePendingPairLink()).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("onPairLink", () => {
+  it("forwards pairLink events and unsubscribes", async () => {
+    const callback = vi.fn();
+    const stop = onPairLink(callback);
+    await vi.waitFor(() => expect(shareHandler).not.toBeNull());
+    expect(addPluginListener).toHaveBeenCalledWith(
+      "blobbies-android",
+      "pairLink",
+      expect.any(Function),
+    );
+    shareHandler?.({ url: "blobbies://pair#xyz" });
+    expect(callback).toHaveBeenCalledWith("blobbies://pair#xyz");
+    stop();
+    expect(unregister).toHaveBeenCalled();
+  });
+
+  it("is a no-op off Android", () => {
+    tauri = false;
+    onPairLink(vi.fn())();
     expect(addPluginListener).not.toHaveBeenCalled();
   });
 });

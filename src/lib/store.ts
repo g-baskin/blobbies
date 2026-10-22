@@ -654,3 +654,42 @@ export async function exportBlob(id: string, name: string): Promise<string | nul
 export async function flushRoster(rows: Agent[]): Promise<void> {
   await flushWrite("roster", rows);
 }
+
+/**
+ * Every slice key that exists on disk (root, `blobs/<id>/…`, `groups/<id>/…`,
+ * transcript archives included). Outside Tauri, the fallback backend's keys.
+ */
+export async function listSliceKeys(): Promise<string[]> {
+  if (isTauri()) {
+    return invoke<string[]>("store_list_slices");
+  }
+  const keys = new Set<string>();
+  for (const key of memoryBackend.keys()) {
+    keys.add(key);
+  }
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+      if (key !== null) {
+        keys.add(key);
+      }
+    }
+  } catch {
+    // no localStorage: memory keys only
+  }
+  return [...keys]
+    .filter((key) => key.startsWith("slice:"))
+    .map((key) => key.slice("slice:".length))
+    .sort();
+}
+
+/**
+ * Copy the whole data root to a timestamped backup folder (newest 5 kept).
+ * Returns the backup path, or null outside Tauri.
+ */
+export async function backupData(): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  return invoke<string>("sync_backup");
+}

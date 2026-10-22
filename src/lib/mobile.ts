@@ -112,3 +112,47 @@ export function onShare(callback: (content: SharedContent) => void): () => void 
     void listener?.unregister();
   };
 }
+
+/**
+ * The `blobbies://pair#…` link (from the computer's pairing QR) that launched
+ * or resumed the app, consumed once. Null off Android. It carries the sync
+ * key: never log it.
+ */
+export async function takePendingPairLink(): Promise<string | null> {
+  if (!isAndroid()) {
+    return null;
+  }
+  const result = await invoke<{ url?: string | null }>(`plugin:${PLUGIN}|take_pending_pair_link`);
+  return typeof result?.url === "string" ? result.url : null;
+}
+
+/**
+ * Subscribe to pair links that arrive while the app is already running.
+ * Returns an unsubscribe function. A no-op off Android.
+ */
+export function onPairLink(callback: (url: string) => void): () => void {
+  if (!isAndroid()) {
+    return () => {};
+  }
+  let listener: PluginListener | null = null;
+  let cancelled = false;
+  void addPluginListener<{ url?: string }>(PLUGIN, "pairLink", (raw) => {
+    if (typeof raw?.url === "string") {
+      callback(raw.url);
+    }
+  })
+    .then((registered) => {
+      if (cancelled) {
+        void registered.unregister();
+      } else {
+        listener = registered;
+      }
+    })
+    .catch(() => {
+      // Listener registration failed: no live pair links.
+    });
+  return () => {
+    cancelled = true;
+    void listener?.unregister();
+  };
+}

@@ -41,7 +41,12 @@ fn main() {
     let attributes = tauri_build::Attributes::new().plugin(
         "blobbies-android",
         tauri_build::InlinedPlugin::new()
-            .commands(&["take_pending_share", "register_listener", "remove_listener"])
+            .commands(&[
+                "take_pending_share",
+                "take_pending_pair_link",
+                "register_listener",
+                "remove_listener",
+            ])
             .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
     );
     if let Err(error) = tauri_build::try_build(attributes) {

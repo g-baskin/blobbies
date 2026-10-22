@@ -388,6 +388,184 @@ pub(crate) fn store_list_blobs(app: tauri::AppHandle) -> Result<Vec<String>> {
     Ok(list_blob_ids(&root))
 }
 
+/// Slice names (file stems) of the `*.json` regular files directly in `dir`.
+/// `file_type` does not follow symlinks, so links are skipped.
+fn json_stems(dir: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter_map(|name| name.strip_suffix(".json").map(str::to_owned))
+        .collect()
+}
+
+/// Every existing slice key under `data_root` that `store_read` accepts.
+/// Each candidate goes back through `resolve_slice_path`, so the allowlist
+/// stays the single source of truth. Sorted.
+fn list_slice_keys(data_root: &Path) -> Vec<String> {
+    let mut keys: Vec<String> = json_stems(data_root)
+        .into_iter()
+        .filter(|stem| resolve_slice_path(data_root, stem).is_ok())
+        .collect();
+    for kind in ["blobs", "groups"] {
+        let Ok(entries) = fs::read_dir(data_root.join(kind)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                continue;
+            }
+            let Ok(id) = entry.file_name().into_string() else {
+                continue;
+            };
+            if !is_valid_blob_id(&id) {
+                continue;
+            }
+            for stem in json_stems(&entry.path()) {
+                let key = format!("{kind}/{id}/{stem}");
+                if resolve_slice_path(data_root, &key).is_ok() {
+                    keys.push(key);
+                }
+            }
+        }
+    }
+    keys.sort();
+    keys
+}
+
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri commands must take AppHandle by value"
+)]
+pub(crate) fn store_list_slices(app: tauri::AppHandle) -> Result<Vec<String>> {
+    let root = data_root(&app)?;
+    Ok(list_slice_keys(&root))
+}
+
+/// How many backups `sync_backup` keeps.
+const MAX_BACKUPS: usize = 5;
+
+/// `YYYYMMDD-HHMMSS` (UTC) for a Unix time in seconds.
+fn backup_stamp(unix_secs: u64) -> String {
+    let days = i64::try_from(unix_secs / 86_400).unwrap_or_default();
+    let secs = unix_secs % 86_400;
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}{month:02}{day:02}-{:02}{:02}{:02}",
+        secs / 3600,
+        (secs % 3600) / 60,
+        secs % 60
+    )
+}
+
+/// Like `copy_dir`, but leaves out the root's `tmp` and any `backups` dir.
+fn copy_for_backup(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == "backups" || (top && name == "tmp") {
+            continue;
+        }
+        let target = to.join(&name);
+        // `file_type` does not follow symlinks: links are skipped.
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_for_backup(&entry.path(), &target, false)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// True for names `backup_stamp` makes (optionally with a `-N` suffix).
+fn is_backup_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() >= 15
+        && bytes[8] == b'-'
+        && bytes[..15]
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 8 || b.is_ascii_digit())
+        && (bytes.len() == 15
+            || (bytes[15] == b'-'
+                && bytes[16..].iter().all(u8::is_ascii_digit)
+                && bytes.len() > 16))
+}
+
+/// Copy `data_root` into `backups/<stamp>` and prune to the newest
+/// `MAX_BACKUPS`. Only app-made backup dirs inside `backups` are ever deleted.
+fn backup_data_root(data_root: &Path, backups: &Path, unix_secs: u64) -> Result<PathBuf> {
+    let io = |error: std::io::Error| Error::Io(error.to_string());
+    fs::create_dir_all(backups).map_err(io)?;
+    let stamp = backup_stamp(unix_secs);
+    let mut target = backups.join(&stamp);
+    let mut n = 1;
+    while fs::symlink_metadata(&target).is_ok() {
+        n += 1;
+        target = backups.join(format!("{stamp}-{n}"));
+    }
+    if data_root.is_dir() {
+        copy_for_backup(data_root, &target, true).map_err(io)?;
+    } else {
+        fs::create_dir_all(&target).map_err(io)?;
+    }
+    let mut existing: Vec<(SystemTime, String)> = fs::read_dir(backups)
+        .map_err(io)?
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let modified = entry.metadata().and_then(|m| m.modified()).ok()?;
+            is_backup_name(&name).then_some((modified, name))
+        })
+        .collect();
+    // Newest first: by name (timestamp), then mtime for same-second suffixes.
+    existing.sort_by(|a, b| b.1.get(..15).cmp(&a.1.get(..15)).then(b.0.cmp(&a.0)));
+    for (_, name) in existing.into_iter().skip(MAX_BACKUPS) {
+        let _ = fs::remove_dir_all(backups.join(name));
+    }
+    Ok(target)
+}
+
+/// Where `sync_backup` puts its copies.
+fn backups_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+    use tauri::Manager;
+    #[cfg(target_os = "android")]
+    let dir = app.path().app_data_dir().map(|dir| dir.join("backups"));
+    #[cfg(not(target_os = "android"))]
+    let dir = app
+        .path()
+        .home_dir()
+        .map(|dir| dir.join(".blobbies-backups"));
+    dir.map_err(|error| Error::Io(error.to_string()))
+}
+
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "tauri commands must take AppHandle by value"
+)]
+pub(crate) fn sync_backup(app: tauri::AppHandle) -> Result<PathBuf> {
+    let root = data_root(&app)?;
+    let secs = u64::try_from(now_ms() / 1000).unwrap_or_default();
+    backup_data_root(&root, &backups_dir(&app)?, secs)
+}
+
 /// Characters allowed in the filename built from a Blob's name.
 ///
 /// The name is user-supplied and lands in a path, so it is filtered to an
@@ -875,5 +1053,92 @@ mod tests {
         assert!(!is_valid_blob_id("61EC34F1-9BA5-4EFF-B8E1-7ACEFB2148EA"));
         assert!(!is_valid_blob_id("../../../etc"));
         assert!(!is_valid_blob_id("61ec34f19ba54effb8e17acefb2148ea"));
+    }
+
+    #[test]
+    fn lists_every_readable_slice_and_nothing_else() {
+        let root = temp_root("list-slices");
+        const GROUP_ID: &str = "0f0e0d0c-0b0a-4908-8706-050403020100";
+        for key in [
+            "settings",
+            "drafts",
+            "blobs/61ec34f1-9ba5-4eff-b8e1-7acefb2148ea/config",
+            "blobs/61ec34f1-9ba5-4eff-b8e1-7acefb2148ea/transcript-2",
+            "groups/0f0e0d0c-0b0a-4908-8706-050403020100/transcript",
+            "groups/0f0e0d0c-0b0a-4908-8706-050403020100/transcript-1",
+        ] {
+            let path = resolve_slice_path(&root, key).unwrap_or_else(|_| panic!("{key}"));
+            fs::create_dir_all(path.parent().unwrap_or(&root)).unwrap_or_else(|_| panic!("mkdir"));
+            fs::write(&path, "{}").unwrap_or_else(|_| panic!("write"));
+        }
+        let _ = fs::write(root.join("unknown.json"), "{}");
+        let _ = fs::write(root.join("blobs").join(BLOB_ID).join("evil.json"), "{}");
+        let _ = fs::create_dir_all(root.join("blobs").join("not-a-uuid"));
+        let _ = fs::write(root.join("blobs/not-a-uuid/config.json"), "{}");
+        let _ = fs::create_dir_all(root.join("groups").join(GROUP_ID).join("recap.json"));
+        assert_eq!(
+            list_slice_keys(&root),
+            vec![
+                format!("blobs/{BLOB_ID}/config"),
+                format!("blobs/{BLOB_ID}/transcript-2"),
+                "drafts".to_owned(),
+                format!("groups/{GROUP_ID}/transcript"),
+                format!("groups/{GROUP_ID}/transcript-1"),
+                "settings".to_owned(),
+            ]
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn backup_stamp_formats_utc() {
+        assert_eq!(backup_stamp(0), "19700101-000000");
+        assert_eq!(backup_stamp(1_792_670_645), "20261022-120405");
+    }
+
+    #[test]
+    fn backup_copies_skips_tmp_and_keeps_five() {
+        let base = temp_root("backup");
+        let root = base.join("data");
+        let backups = base.join("backups");
+        fs::create_dir_all(root.join("blobs").join(BLOB_ID)).unwrap_or_else(|_| panic!("mkdir"));
+        fs::create_dir_all(root.join("tmp")).unwrap_or_else(|_| panic!("mkdir"));
+        fs::write(root.join("settings.json"), "{\"a\":1}").unwrap_or_else(|_| panic!("write"));
+        fs::write(root.join("blobs").join(BLOB_ID).join("config.json"), "{}")
+            .unwrap_or_else(|_| panic!("write"));
+        fs::write(root.join("tmp").join("x.json"), "{}").unwrap_or_else(|_| panic!("write"));
+        // A non-backup dir in the backups folder must survive pruning.
+        fs::create_dir_all(backups.join("keep-me")).unwrap_or_else(|_| panic!("mkdir"));
+
+        let first =
+            backup_data_root(&root, &backups, 1_000_000_000).unwrap_or_else(|_| panic!("backup"));
+        assert_eq!(
+            fs::read_to_string(first.join("settings.json")).unwrap_or_default(),
+            "{\"a\":1}"
+        );
+        assert!(
+            first
+                .join("blobs")
+                .join(BLOB_ID)
+                .join("config.json")
+                .is_file()
+        );
+        assert!(!first.join("tmp").exists());
+        assert!(root.join("settings.json").is_file(), "copy, never move");
+
+        for i in 1..=6 {
+            backup_data_root(&root, &backups, 1_000_000_000 + i * 60)
+                .unwrap_or_else(|_| panic!("backup"));
+        }
+        let mut names: Vec<String> = fs::read_dir(&backups)
+            .unwrap_or_else(|_| panic!("read"))
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 6, "{names:?}");
+        assert!(names.contains(&"keep-me".to_owned()));
+        assert!(!first.exists(), "oldest pruned");
+        let _ = fs::remove_dir_all(&base);
     }
 }

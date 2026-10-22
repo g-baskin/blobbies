@@ -13,7 +13,11 @@ export type SecretName =
   | "tinfoil-cache-secret"
   | "composio-api-key"
   /** OAuth session for Composio, stored as JSON. Preferred over the key. */
-  | "composio-oauth";
+  | "composio-oauth"
+  /** End-to-end sync key, base64url (32 bytes). */
+  | "sync-key"
+  /** Sync remote: provider config + credentials as JSON. */
+  | "sync-remote";
 
 export async function getSecret(name: SecretName): Promise<string | null> {
   if (isTauri()) {

@@ -57,6 +57,8 @@ pub fn run() {
             store::store_delete_blob,
             store::store_list_blobs,
             store::store_export_blob,
+            store::store_list_slices,
+            store::sync_backup,
             home::blob_home_list,
             home::blob_home_read,
             home::blob_home_write,

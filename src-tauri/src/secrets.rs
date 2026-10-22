@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 const SERVICE: &str = "com.blobbies.app";
 
 /// Every secret name the webview may read or write. Default-deny.
-const ALLOWED_NAMES: [&str; 4] = [
+const ALLOWED_NAMES: [&str; 6] = [
     "tinfoil-api-key",
     "tinfoil-cache-secret",
     // OAuth session for Composio (access + refresh token, as JSON). Preferred
@@ -27,11 +27,16 @@ const ALLOWED_NAMES: [&str; 4] = [
     // CLI, which kept its own credential in ~/.composio and shipped for macOS
     // and Linux only.
     "composio-api-key",
+    // End-to-end sync: the base64url 32-byte sync key, and the remote's
+    // provider config + credentials as JSON (up to 8 KB).
+    "sync-key",
+    "sync-remote",
 ];
 
 /// Upper bound on a stored secret (bytes). Keys and cache secrets are tiny;
-/// anything bigger is a bug or abuse.
-const MAX_SECRET_BYTES: usize = 4 * 1024;
+/// `sync-remote` (provider config + credentials) may reach 8 KB; anything
+/// bigger is a bug or abuse.
+const MAX_SECRET_BYTES: usize = 8 * 1024;
 
 fn ensure_allowed(name: &str) -> Result<()> {
     if ALLOWED_NAMES.contains(&name) {

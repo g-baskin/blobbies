@@ -45,6 +45,13 @@
                 <data android:mimeType="image/*" />
                 <data android:mimeType="application/pdf" />
             </intent-filter>
+            <!-- Sync pairing QR: blobbies://pair#<payload> (BlobbiesPlugin.readPairLink). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="blobbies" android:host="pair" />
+            </intent-filter>
         </activity>
 
         <provider

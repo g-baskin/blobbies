@@ -54,15 +54,23 @@ class BlobbiesPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   @Volatile private var pendingShare: JSObject? = null
+  // Raw `blobbies://pair#...` URI. Contains the sync key: never log it.
+  @Volatile private var pendingPairLink: String? = null
 
   override fun load(webView: WebView) {
     super.load(webView)
     pendingShare = readShare(activity.intent)
+    pendingPairLink = readPairLink(activity.intent)
     // Mark the launch intent consumed so a recreated activity doesn't replay it.
-    if (pendingShare != null) activity.intent = Intent(Intent.ACTION_MAIN)
+    if (pendingShare != null || pendingPairLink != null) activity.intent = Intent(Intent.ACTION_MAIN)
   }
 
   override fun onNewIntent(intent: Intent) {
+    readPairLink(intent)?.let { url ->
+      pendingPairLink = url
+      trigger("pairLink", JSObject().put("url", url))
+      return
+    }
     val share = readShare(intent) ?: return
     pendingShare = share
     trigger("share", share)
@@ -157,6 +165,25 @@ class BlobbiesPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   private fun b64(bytes: ByteArray) = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+  // ---- Pair link ----
+
+  @Command
+  fun takePendingPairLink(invoke: Invoke) {
+    val url = pendingPairLink
+    pendingPairLink = null
+    invoke.resolve(JSObject().put("url", url ?: JSONObject.NULL))
+  }
+
+  /** The raw `blobbies://pair...` string, or null. Never logged. */
+  private fun readPairLink(intent: Intent?): String? {
+    if (intent == null || intent.action != Intent.ACTION_VIEW) return null
+    val raw = intent.dataString ?: return null
+    if (raw.length > MAX_PAIR_LINK_CHARS) return null
+    val uri = intent.data ?: return null
+    if (uri.scheme != "blobbies" || uri.host != "pair") return null
+    return raw
+  }
 
   // ---- Share sheet ----
 
@@ -275,7 +302,10 @@ class BlobbiesPlugin(private val activity: Activity) : Plugin(activity) {
       "tinfoil-api-key",
       "tinfoil-cache-secret",
       "composio-oauth",
-      "composio-api-key"
+      "composio-api-key",
+      "sync-key",
+      "sync-remote"
     )
+    private const val MAX_PAIR_LINK_CHARS = 4 * 1024
   }
 }
