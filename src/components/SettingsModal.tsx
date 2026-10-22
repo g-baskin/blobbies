@@ -2,8 +2,8 @@ import { CircleArrowDown, Cpu, Plug, Settings, X } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink } from "@/components/ExternalLink";
 import { PillSelect } from "@/components/PillSelect";
-import { COMPOSIO_DASHBOARD_URL, composioSignedIn, forgetComposioSession } from "@/lib/composio";
-import { composioLogIn, composioSignOut } from "@/lib/composio-oauth";
+import { COMPOSIO_DASHBOARD_URL, composioCheck, forgetComposioSession } from "@/lib/composio";
+import { composioLogIn, composioSignOut, loadComposioTokens } from "@/lib/composio-oauth";
 import { ffmpegPresent } from "@/lib/media";
 import {
   getOllamaVersion,
@@ -180,6 +180,11 @@ type ComposioStatus = {
   /** Empty unless something failed; shown verbatim. */
   error: string;
   installable: boolean;
+  /**
+   * A browser sign-in is stored. Matters while not connected: a refused one
+   * must be removable, or it sits in the keychain with no control to clear it.
+   */
+  session: boolean;
 };
 
 const COMPOSIO_IDLE: ComposioStatus = {
@@ -187,6 +192,7 @@ const COMPOSIO_IDLE: ComposioStatus = {
   version: "",
   error: "",
   installable: true,
+  session: false,
 };
 
 /** Status-dot tone for the Composio row. */
@@ -244,11 +250,16 @@ async function probeComposio(
   setStatus: (update: (current: ComposioStatus) => ComposioStatus) => void,
 ): Promise<void> {
   setStatus((current) => ({ ...current, stage: "checking", error: "" }));
-  const signedIn = await composioSignedIn();
+  const check = await composioCheck();
+  // Read after the check, which may have refreshed or dropped the session.
+  const session = (await loadComposioTokens()) !== null;
   setStatus((current) => ({
     ...current,
-    stage: signedIn ? "signedIn" : "needsKey",
+    stage: check.ok ? "signedIn" : "needsKey",
+    // Nothing stored is the normal first run, not a fault to show in red.
+    error: check.ok || check.reason === "none" ? "" : check.message,
     installable: true,
+    session,
   }));
 }
 
@@ -677,7 +688,8 @@ export function SettingsModal({
                       {composioBlurb(composio)}
                     </span>
                   </span>
-                  {composio.stage === "signedIn" ? (
+                  {composio.stage === "signedIn" ||
+                  (composio.stage === "needsKey" && composio.session) ? (
                     <button
                       type="button"
                       className="modal-button"

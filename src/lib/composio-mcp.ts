@@ -65,6 +65,24 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 /** Failure already phrased for a person, or for a model to act on. */
 export class ComposioError extends Error {}
 
+/** No credential is stored at all, which is a state rather than a fault. */
+class NoCredentialError extends ComposioError {}
+
+/**
+ * The browser sign-in's token was refused. Thrown so callers retry once: the
+ * next attempt skips that token and uses the pasted key, if there is one.
+ */
+class BearerRejectedError extends ComposioError {}
+
+/**
+ * A bearer token the server has refused this session.
+ *
+ * Without it a refused sign-in shadows a working key forever, because the
+ * token is preferred whenever one is stored. Compared by value, so signing in
+ * again (a new token) is tried immediately.
+ */
+let rejectedBearer: string | null = null;
+
 /** The negotiated session id, reused until the server forgets it. */
 let sessionId: string | null = null;
 
@@ -77,12 +95,15 @@ let nextRequestId = 1;
 export function forgetComposioSession(): void {
   sessionId = null;
   handshake = null;
+  rejectedBearer = null;
 }
 
 /** How this request proves who it is. */
 interface Credential {
   header: string;
   value: string;
+  /** The OAuth access token, when that is what is being sent. */
+  bearer?: string;
 }
 
 /**
@@ -100,12 +121,17 @@ interface Credential {
  */
 async function credential(): Promise<Credential> {
   const token = await composioAccessToken();
-  if (token !== null) {
-    return { header: "authorization", value: `Bearer ${token}` };
+  if (token !== null && token !== rejectedBearer) {
+    return { header: "authorization", value: `Bearer ${token}`, bearer: token };
   }
   const key = (await getSecret("composio-api-key")) ?? "";
   if (key.trim() === "") {
-    throw new ComposioError(
+    if (token !== null) {
+      throw new ComposioError(
+        "Composio rejected your sign-in. Open Settings \u2192 Plugins, sign out, then log in again.",
+      );
+    }
+    throw new NoCredentialError(
       "No Composio account yet. Open Settings \u2192 Plugins and connect one.",
     );
   }
@@ -198,6 +224,14 @@ async function rpc(
   }
 
   if (response.status === 401 || response.status === 403) {
+    if (auth.bearer !== undefined) {
+      // Any session was opened with this token, so it goes with it.
+      rejectedBearer = auth.bearer;
+      sessionId = null;
+      throw new BearerRejectedError(
+        "Composio rejected your sign-in. Open Settings \u2192 Plugins, sign out, then log in again.",
+      );
+    }
     throw new ComposioError(
       "Composio rejected that account. Open Settings \u2192 Plugins and reconnect.",
     );
@@ -233,15 +267,26 @@ async function ready(signal?: AbortSignal): Promise<string> {
     return sessionId;
   }
   handshake ??= (async () => {
-    await rpc(
-      "initialize",
-      {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "blobbies", version: "0.1.8" },
-      },
-      signal,
-    );
+    const initialize = () =>
+      rpc(
+        "initialize",
+        {
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "blobbies", version: "0.1.8" },
+        },
+        signal,
+      );
+    try {
+      await initialize();
+    } catch (error) {
+      // A refused sign-in is skipped from now on, so a second try goes out
+      // with the pasted key, or explains that there is none.
+      if (!(error instanceof BearerRejectedError)) {
+        throw error;
+      }
+      await initialize();
+    }
     if (sessionId === null) {
       throw new ComposioError("Composio did not open a session.");
     }
@@ -274,10 +319,18 @@ export async function callComposioTool(
   try {
     result = await invoke();
   } catch (error) {
-    // Only a session problem is worth a second attempt; a bad key or a
-    // rejected argument would fail again identically.
-    if (error instanceof ComposioError && /session/i.test(error.message)) {
-      forgetComposioSession();
+    // Only a session problem or a refused sign-in token is worth a second
+    // attempt (the retry skips that token); a bad key or a rejected argument
+    // would fail again identically.
+    if (
+      error instanceof BearerRejectedError ||
+      (error instanceof ComposioError && /session/i.test(error.message))
+    ) {
+      // A refused token already dropped its session in `rpc`; forgetting
+      // here would also forget the refusal and send the dead token again.
+      if (!(error instanceof BearerRejectedError)) {
+        forgetComposioSession();
+      }
       result = await invoke();
     } else {
       throw error;
@@ -303,10 +356,30 @@ export async function callComposioTool(
  * "connected" is the one thing the Plugins tab must not get wrong.
  */
 export async function composioReachable(signal?: AbortSignal): Promise<boolean> {
+  return (await composioCheck(signal)).ok;
+}
+
+/** Outcome of a login check, with the reason when it failed. */
+export type ComposioCheck =
+  | { ok: true }
+  /** `none`: nothing is stored yet. `failed`: something is, and it did not work. */
+  | { ok: false; reason: "none" | "failed"; message: string };
+
+/**
+ * The same handshake as `composioReachable`, keeping the reason.
+ *
+ * Settings shows it: collapsing every failure into "log in" sent someone with
+ * a stored, refused credential round the same loop with no clue why.
+ */
+export async function composioCheck(signal?: AbortSignal): Promise<ComposioCheck> {
   try {
     await ready(signal);
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof NoCredentialError ? "none" : "failed",
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }

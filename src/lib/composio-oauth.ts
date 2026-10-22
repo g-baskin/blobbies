@@ -11,7 +11,9 @@
  * written:
  *
  * - `WWW-Authenticate` on an unauthenticated request points at the RFC 9728
- *   metadata, which names `login.composio.dev` as the authorization server.
+ *   metadata, which names the authorization server (`connect.composio.dev`
+ *   as of October 2026; it was `login.composio.dev` before). It is read at
+ *   sign-in time, never assumed — see `metadata()`.
  * - **Dynamic client registration works**, so no client id is baked into this
  *   repo and nothing has to be pre-arranged with Composio.
  * - **No client secret is issued** (`token_endpoint_auth_method: "none"`),
@@ -32,11 +34,27 @@ import { invoke } from "@tauri-apps/api/core";
 import { httpFetch } from "@/lib/http";
 import { deleteSecret, getSecret, setSecret } from "@/lib/secrets";
 
-/** Composio's authorization server, from its own protected-resource metadata. */
-const ISSUER = "https://login.composio.dev";
-
 /** The resource these tokens are for, echoed per RFC 8707. */
 const RESOURCE = "https://connect.composio.dev/mcp";
+
+/**
+ * Where the MCP endpoint says which authorization server it trusts (RFC 9728).
+ *
+ * Read on every sign-in rather than hardcoded. Composio moved this once
+ * already: it used to name `login.composio.dev`, and now names
+ * `connect.composio.dev`, whose authorize page binds the token to a Connect
+ * account before handing off to `login`. Tokens from going straight to
+ * `login`'s authorize page still exchanged fine and were then refused by the
+ * MCP endpoint with a 401, so a sign-in that "worked" never connected.
+ */
+const RESOURCE_METADATA = "https://connect.composio.dev/.well-known/oauth-protected-resource";
+
+/**
+ * Hosts an issuer or endpoint may live on. Discovery is followed, not trusted:
+ * a metadata document naming some other host would otherwise steer the
+ * browser, the code and the PKCE verifier to it.
+ */
+const TRUSTED_HOSTS = new Set(["connect.composio.dev", "login.composio.dev"]);
 
 /** Everything the MCP endpoint needs, plus a refresh token. */
 const SCOPE = "openid profile email offline_access";
@@ -97,12 +115,49 @@ async function json<T>(response: Response, what: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** Discovery, so endpoints are never hardcoded and can move. */
+/** True for an https URL on a host in `TRUSTED_HOSTS`. */
+function trusted(url: unknown): url is string {
+  if (typeof url !== "string") {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.port === "" && TRUSTED_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Discovery, so endpoints are never hardcoded and can move: the resource
+ * names its authorization server, and that server names its endpoints.
+ */
 async function metadata(): Promise<Metadata> {
-  return json<Metadata>(
-    await httpFetch(`${ISSUER}/.well-known/oauth-authorization-server`, { method: "GET" }),
+  const resource = await json<{ authorization_servers?: unknown }>(
+    await httpFetch(RESOURCE_METADATA, { method: "GET" }),
     "discovery",
   );
+  const servers = Array.isArray(resource.authorization_servers)
+    ? resource.authorization_servers
+    : [];
+  const issuer = servers.find(trusted);
+  if (issuer === undefined) {
+    throw new OauthError("Composio named a sign-in server this app does not trust.");
+  }
+  const meta = await json<Metadata>(
+    await httpFetch(`${issuer.replace(/\/+$/, "")}/.well-known/oauth-authorization-server`, {
+      method: "GET",
+    }),
+    "discovery",
+  );
+  if (
+    !trusted(meta.authorization_endpoint) ||
+    !trusted(meta.token_endpoint) ||
+    (meta.registration_endpoint !== undefined && !trusted(meta.registration_endpoint))
+  ) {
+    throw new OauthError("Composio named a sign-in server this app does not trust.");
+  }
+  return meta;
 }
 
 /**

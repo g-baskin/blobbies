@@ -36,15 +36,31 @@ let calls: { url: string; body: string }[] = [];
 let tokenReply: Record<string, unknown> = {};
 /** HTTP status the token endpoint answers with. */
 let tokenStatus = 200;
+/** What the MCP resource names as its authorization server (RFC 9728). */
+let authServers: unknown = ["https://connect.composio.dev"];
+/** Overridable authorize endpoint in the server's discovery document. */
+let authorizeEndpoint = "https://connect.composio.dev/oauth/authorize";
 
 vi.mock("@/lib/http", () => ({
   httpFetch: async (url: string, init: RequestInit) => {
     const body = typeof init.body === "string" ? init.body : "";
     calls.push({ url, body });
-    if (url.includes(".well-known")) {
+    if (url.includes("oauth-protected-resource")) {
       return new Response(
         JSON.stringify({
-          authorization_endpoint: "https://login.composio.dev/oauth2/authorize",
+          resource: "https://connect.composio.dev/mcp",
+          authorization_servers: authServers,
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes(".well-known")) {
+      // Shape of connect.composio.dev's live document: its own authorize
+      // page, with token and registration still on login.
+      return new Response(
+        JSON.stringify({
+          issuer: new URL(url).origin,
+          authorization_endpoint: authorizeEndpoint,
           token_endpoint: "https://login.composio.dev/oauth2/token",
           registration_endpoint: "https://login.composio.dev/oauth2/register",
         }),
@@ -61,6 +77,8 @@ vi.mock("@/lib/http", () => ({
 beforeEach(async () => {
   calls = [];
   tokenStatus = 200;
+  authServers = ["https://connect.composio.dev"];
+  authorizeEndpoint = "https://connect.composio.dev/oauth/authorize";
   tokenReply = {
     access_token: "at_first",
     refresh_token: "rt_first",
@@ -110,6 +128,35 @@ describe("composioLogIn", () => {
       refresh: "rt_first",
       clientId: "client_TEST",
     });
+  });
+
+  it("signs in through the server the MCP resource names, not a hardcoded one", async () => {
+    // The bug this covers: the issuer was pinned to login.composio.dev after
+    // Composio moved the resource to connect.composio.dev. Sign-in completed,
+    // tokens were stored, and every MCP request then answered 401.
+    let authorizeUrl = "";
+    await composioLogIn(async (url) => {
+      authorizeUrl = url;
+      redirect.query = `code=c&state=${new URL(url).searchParams.get("state")}`;
+    });
+    expect(calls[0]?.url).toBe("https://connect.composio.dev/.well-known/oauth-protected-resource");
+    expect(calls[1]?.url).toBe(
+      "https://connect.composio.dev/.well-known/oauth-authorization-server",
+    );
+    expect(new URL(authorizeUrl).origin + new URL(authorizeUrl).pathname).toBe(
+      "https://connect.composio.dev/oauth/authorize",
+    );
+  });
+
+  it("refuses an authorization server outside Composio's hosts", async () => {
+    // Discovery is followed, not trusted: the browser, the code and the
+    // verifier would otherwise go wherever the document pointed.
+    authServers = ["https://evil.example"];
+    await expect(signIn()).rejects.toThrow(/does not trust/);
+    authServers = ["https://connect.composio.dev"];
+    authorizeEndpoint = "https://connect.composio.dev.evil.example/authorize";
+    await expect(signIn()).rejects.toThrow(/does not trust/);
+    expect(calls.some((call) => call.url.includes("/register"))).toBe(false);
   });
 
   it("never reuses a code that came back with the wrong state", async () => {

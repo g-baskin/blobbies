@@ -21,7 +21,12 @@ import { callComposioTool, composioReachable, forgetComposioSession } from "@/li
  * the credential and the tool allowlist.
  */
 
-export { COMPOSIO_DASHBOARD_URL, forgetComposioSession } from "@/lib/composio-mcp";
+export {
+  COMPOSIO_DASHBOARD_URL,
+  type ComposioCheck,
+  composioCheck,
+  forgetComposioSession,
+} from "@/lib/composio-mcp";
 
 /**
  * Whether Composio is usable right now: a key that actually works.
