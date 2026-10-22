@@ -8,6 +8,15 @@ import {
   MAX_ROUTINES,
   type Routine,
 } from "@/data/agents";
+import { loadPlugins } from "@/data/plugins";
+import {
+  type ApprovalHost,
+  actionLabel,
+  askWithDeadline,
+  isReadOnlyAction,
+  notRunMessage,
+  splitToolSlug,
+} from "@/lib/app-approval";
 import { composioExecute, composioSchema, composioSearch } from "@/lib/composio";
 import {
   capToolText,
@@ -1376,7 +1385,18 @@ export function makeRoutineTools(routines: RoutineAccess): AgentTool[] {
  * instruction. This is the highest-value fence in the app — these tools hold
  * real credentials and can send mail.
  */
-export function makeComposioTools(model?: string): AgentTool[] {
+export function makeComposioTools(
+  model?: string,
+  approvals?: {
+    host: ApprovalHost;
+    /**
+     * Apps the user allowed "for this task". Owned by the turn, not by this
+     * catalog: a turn can build the catalog more than once (the no-tools
+     * retry, the follow-through round) and must not ask twice.
+     */
+    taskAllowed: Set<string>;
+  },
+): AgentTool[] {
   // App results were the one tool output nothing capped: a bulk search can
   // return a megabyte, which fits no window and silently shoves the
   // conversation out of the one it lands in. Same budget as a fetched page,
@@ -1429,8 +1449,10 @@ export function makeComposioTools(model?: string): AgentTool[] {
     description:
       "Run one of the user's app tools and return what it says. Reading is " +
       "free — fetch, list, search away. Anything that leaves a trace (sending, " +
-      "replying, deleting, creating, updating) needs the user's word first: " +
-      "say exactly what you are about to do and wait for them to agree. " +
+      "replying, deleting, creating, updating) shows the user an approval " +
+      "prompt with your exact arguments when you call it: say in one line " +
+      "what you are about to do, then call it — do not stop to ask in chat " +
+      "first. If they decline, do not try it again. " +
       "If the result looks cut off, or the app parks a big answer in a file " +
       "you cannot open, run the call again for fewer items \u2014 you can only " +
       "read what comes back inline. Say which part you could not see rather " +
@@ -1439,14 +1461,64 @@ export function makeComposioTools(model?: string): AgentTool[] {
     // Sequential: these have side effects — sending mail, creating events —
     // and must not be fired in parallel batches.
     executionMode: "sequential",
-    execute: async (args) =>
-      wrapUntrusted(
-        capToolText(await composioExecute(args.tool, args.arguments), limit),
+    execute: async (args, context) => {
+      // The name that was approved is the name that runs.
+      const tool = args.tool.trim();
+      const refusal = await approveAppAction(tool, args.arguments, context.signal, approvals);
+      if (refusal !== null) {
+        return refusal;
+      }
+      return wrapUntrusted(
+        capToolText(await composioExecute(tool, args.arguments), limit),
         "composio",
-      ),
+      );
+    },
   };
 
   return [search, schema, run];
+}
+
+/**
+ * The approval gate in front of `app_run_tool`: null to go ahead, or the
+ * sentence the model gets back instead of a result.
+ *
+ * Fails closed. With no way to ask (a helper, a harness), an action that
+ * could change something is refused rather than run unseen.
+ */
+async function approveAppAction(
+  tool: string,
+  args: string,
+  signal: AbortSignal,
+  approvals: { host: ApprovalHost; taskAllowed: Set<string> } | undefined,
+): Promise<string | null> {
+  const catalog = await loadPlugins();
+  const { toolkit, action } = splitToolSlug(
+    tool,
+    catalog.map((plugin) => plugin.id),
+  );
+  if (isReadOnlyAction(action)) {
+    return null;
+  }
+  const label = actionLabel(action);
+  if (approvals === undefined) {
+    return `Not run: "${label}" needs the user's approval, and there is no way to ask from here.`;
+  }
+  if (approvals.taskAllowed.has(toolkit) || approvals.host.isAlwaysAllowed(toolkit)) {
+    return null;
+  }
+  const outcome = await askWithDeadline(
+    approvals.host,
+    { toolkit, tool, action: label, arguments: args },
+    signal,
+  );
+  if (outcome === "once" || outcome === "always") {
+    return null;
+  }
+  if (outcome === "task") {
+    approvals.taskAllowed.add(toolkit);
+    return null;
+  }
+  return notRunMessage(outcome, label);
 }
 
 /**

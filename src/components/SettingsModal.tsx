@@ -76,6 +76,8 @@ interface SettingsModalProps {
   onReplayOnboarding: () => void;
   /** The Editors (ACP) section, rendered under Plugins by the app. */
   acp: ReactNode;
+  /** The "App actions" section: which apps run without asking. */
+  appApprovals: ReactNode;
   onClose: () => void;
 }
 
@@ -303,6 +305,7 @@ export function SettingsModal({
   onModelChange,
   onReplayOnboarding,
   acp,
+  appApprovals,
   onClose,
 }: SettingsModalProps) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
@@ -752,6 +755,8 @@ export function SettingsModal({
                   </>
                 ) : null}
               </div>
+
+              {appApprovals}
 
               {acp}
 

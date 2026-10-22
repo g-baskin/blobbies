@@ -1,5 +1,6 @@
 import type { Message as AiMessage } from "@kenkaiiii/gg-ai";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import type { AppApprovalPrompt } from "@/components/AppApprovalDialog";
 import { ChatPane } from "@/components/ChatPane";
 import { ComposePane } from "@/components/ComposePane";
 import { CreatorPane } from "@/components/CreatorPane";
@@ -34,8 +35,10 @@ import {
   transcriptFor,
   uniqueBlobName,
 } from "@/data/agents";
+import { loadPlugins } from "@/data/plugins";
 import { useAcpBridge } from "@/lib/acp/useAcpBridge";
 import type { BlobActivity } from "@/lib/activity";
+import type { ApprovalAnswer, ApprovalRequest } from "@/lib/app-approval";
 import {
   type Attachment,
   attachmentName,
@@ -101,6 +104,18 @@ const AcpPairingDialog = lazy(() =>
 const AcpSettings = lazy(() =>
   import("@/components/AcpSettings").then((module) => ({ default: module.AcpSettings })),
 );
+// Shown only when a Blob asks to act in an app, or in Settings → Plugins:
+// neither belongs in the startup chunk.
+const AppApprovalDialog = lazy(() =>
+  import("@/components/AppApprovalDialog").then((module) => ({
+    default: module.AppApprovalDialog,
+  })),
+);
+const AppApprovalSettings = lazy(() =>
+  import("@/components/AppApprovalSettings").then((module) => ({
+    default: module.AppApprovalSettings,
+  })),
+);
 
 // The provider stack (`@/lib/ai` → gg-ai + the OpenAI SDK + zod + Tinfoil,
 // several hundred KB minified) is only needed once a turn actually runs;
@@ -141,6 +156,14 @@ const GROUP_ROUTER_CONTEXT = 5;
 const GROUP_FOCUS_CHARS = 300;
 
 type Mode = { kind: "chat" } | { kind: "palette" } | { kind: "creator"; initialName: string };
+
+/** An app action waiting for the user (see askAppApproval). */
+interface PendingApproval {
+  id: string;
+  /** Composio toolkit slug, what "Always allow" remembers. */
+  toolkit: string;
+  prompt: AppApprovalPrompt;
+}
 
 function isTheme(value: string): value is ThemePreference {
   return value === "system" || value === "light" || value === "dark";
@@ -430,6 +453,15 @@ export function App() {
   });
   /** Local MCP servers; only enabled ones are contacted, on every turn. */
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
+  /** Apps whose actions run without asking ("Always allow"). */
+  const [appAlwaysAllow, setAppAlwaysAllow] = useState<string[]>([]);
+  // Read by turns already running, which must see a revocation immediately.
+  const appAlwaysAllowRef = useRef(appAlwaysAllow);
+  appAlwaysAllowRef.current = appAlwaysAllow;
+  /** App actions waiting for the user, oldest first; the card shows the first. */
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  /** How each waiting request is answered, by id. Not state: never rendered. */
+  const approvalAnswers = useRef(new Map<string, (answer: ApprovalAnswer) => void>());
   /**
    * Installed skills, named in every Blob's prompt.
    *
@@ -586,6 +618,15 @@ export function App() {
                 typeof server?.url === "string" && !("error" in parseLoopbackUrl(server.url)),
             ),
           );
+        }
+        if (Array.isArray(settings.appAlwaysAllow)) {
+          setAppAlwaysAllow([
+            ...new Set(
+              settings.appAlwaysAllow.filter(
+                (id): id is string => typeof id === "string" && id !== "",
+              ),
+            ),
+          ]);
         }
         if (Array.isArray(settings.plugins)) {
           const slugs = settings.plugins.filter((id): id is string => typeof id === "string");
@@ -763,8 +804,71 @@ export function App() {
       model,
       plugins: installedPlugins,
       mcpServers,
+      appAlwaysAllow,
     });
-  }, [userName, theme, timezone, model, installedPlugins, mcpServers]);
+  }, [userName, theme, timezone, model, installedPlugins, mcpServers, appAlwaysAllow]);
+
+  /**
+   * Put an app action in front of the user and wait for their answer.
+   *
+   * Settles "deny" when `signal` fires (the 10-minute deadline or Stop), and
+   * the card goes with it: a prompt for an action nobody is waiting on any
+   * more would turn a later click into nothing at all.
+   */
+  const askAppApproval = async (
+    blob: { name: string; notifications?: boolean | undefined },
+    request: ApprovalRequest,
+    signal: AbortSignal,
+  ): Promise<ApprovalAnswer> => {
+    const catalog = await loadPlugins();
+    if (signal.aborted) {
+      return "deny";
+    }
+    const appName =
+      catalog.find((plugin) => plugin.id === request.toolkit)?.name ?? request.toolkit;
+    const id = crypto.randomUUID();
+    return new Promise<ApprovalAnswer>((resolve) => {
+      const finish = (answer: ApprovalAnswer) => {
+        signal.removeEventListener("abort", onAbort);
+        approvalAnswers.current.delete(id);
+        setApprovals((queue) => queue.filter((entry) => entry.id !== id));
+        resolve(answer);
+      };
+      const onAbort = () => finish("deny");
+      signal.addEventListener("abort", onAbort);
+      approvalAnswers.current.set(id, finish);
+      setApprovals((queue) => [
+        ...queue,
+        {
+          id,
+          toolkit: request.toolkit,
+          prompt: {
+            blobName: blob.name,
+            appName,
+            action: request.action,
+            arguments: request.arguments,
+          },
+        },
+      ]);
+      // A routine may be asking while the user is elsewhere; it waits on
+      // them, so it always earns a banner unless this Blob's are off.
+      if (!document.hasFocus() && blob.notifications !== false) {
+        void notify(
+          blob.name,
+          `Wants to ${request.action.toLowerCase()} in ${appName}. Open Blobbies to allow or deny.`,
+        );
+      }
+    });
+  };
+
+  const answerAppApproval = (entry: PendingApproval, answer: ApprovalAnswer) => {
+    if (answer === "always") {
+      setAppAlwaysAllow((current) =>
+        current.includes(entry.toolkit) ? current : [...current, entry.toolkit].sort(),
+      );
+    }
+    approvalAnswers.current.get(entry.id)?.(answer);
+  };
 
   const changeUserName = (name: string) => {
     const capped = name.slice(0, MAX_USER_NAME_LENGTH);
@@ -2225,6 +2329,15 @@ export function App() {
         // the connected list: search spans the whole catalogue, so it is the
         // way a Blob discovers an app the user has not added here yet.
         hasConnectedApps: composioReady || connectedApps.length > 0,
+        appApprovals: {
+          isAlwaysAllowed: (toolkit) => appAlwaysAllowRef.current.includes(toolkit),
+          ask: (request, signal) =>
+            askAppApproval(
+              { name: speaker.name, notifications: target.notifications },
+              request,
+              signal,
+            ),
+        },
         signal: abort.signal,
         getSteeringMessages: () => (steering.length === 0 ? null : steering.splice(0)),
         onAsk: (pending) => {
@@ -3512,6 +3625,16 @@ export function App() {
           model={model}
           onModelChange={changeModel}
           onReplayOnboarding={replayOnboarding}
+          appApprovals={
+            <Suspense fallback={null}>
+              <AppApprovalSettings
+                appIds={appAlwaysAllow}
+                onRemove={(id) =>
+                  setAppAlwaysAllow((current) => current.filter((entry) => entry !== id))
+                }
+              />
+            </Suspense>
+          }
           acp={
             <Suspense fallback={null}>
               <AcpSettings
@@ -3542,6 +3665,23 @@ export function App() {
             refreshComposio();
           }}
         />
+      ) : null}
+      {approvals[0] !== undefined ? (
+        <Suspense fallback={null}>
+          <AppApprovalDialog
+            // Keyed by request, so focus lands on "Don't allow" afresh for
+            // each one rather than staying on a button the last answer used.
+            key={approvals[0].id}
+            prompt={approvals[0].prompt}
+            waiting={approvals.length - 1}
+            onAnswer={(answer) => {
+              const first = approvals[0];
+              if (first !== undefined) {
+                answerAppApproval(first, answer);
+              }
+            }}
+          />
+        </Suspense>
       ) : null}
       {acpBridge.pairing !== null ? (
         <Suspense fallback={null}>

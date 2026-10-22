@@ -29,6 +29,11 @@ export interface Settings {
    * `parseLoopbackUrl` rejects URLs carrying credentials.
    */
   mcpServers?: McpServerConfig[];
+  /**
+   * Composio toolkit slugs whose actions run without asking, because the user
+   * chose "Always allow" on an approval card. Removable in Settings → Plugins.
+   */
+  appAlwaysAllow?: string[];
 }
 
 /** State of the ACP editor bridge (see lib/acp/host.ts). */
