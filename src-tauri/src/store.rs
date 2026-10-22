@@ -460,9 +460,9 @@ fn backup_stamp(unix_secs: u64) -> String {
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
+    let day_of_year = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     format!(
@@ -496,17 +496,21 @@ fn copy_for_backup(from: &Path, to: &Path, top: bool) -> std::io::Result<()> {
 
 /// True for names `backup_stamp` makes (optionally with a `-N` suffix).
 fn is_backup_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    bytes.len() >= 15
-        && bytes[8] == b'-'
-        && bytes[..15]
-            .iter()
-            .enumerate()
-            .all(|(i, b)| i == 8 || b.is_ascii_digit())
-        && (bytes.len() == 15
-            || (bytes[15] == b'-'
-                && bytes[16..].iter().all(u8::is_ascii_digit)
-                && bytes.len() > 16))
+    let Some((stamp, suffix)) = name.split_at_checked(15) else {
+        return false;
+    };
+    let stamp_ok = stamp.bytes().enumerate().all(|(i, b)| {
+        if i == 8 {
+            b == b'-'
+        } else {
+            b.is_ascii_digit()
+        }
+    });
+    let suffix_ok = suffix.is_empty()
+        || suffix
+            .strip_prefix('-')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    stamp_ok && suffix_ok
 }
 
 /// Copy `data_root` into `backups/<stamp>` and prune to the newest
@@ -1059,8 +1063,8 @@ mod tests {
 
     #[test]
     fn lists_every_readable_slice_and_nothing_else() {
-        let root = temp_root("list-slices");
         const GROUP_ID: &str = "0f0e0d0c-0b0a-4908-8706-050403020100";
+        let root = temp_root("list-slices");
         for key in [
             "settings",
             "drafts",
