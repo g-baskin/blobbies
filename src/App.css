@@ -2518,9 +2518,25 @@ a.modal-button {
 
 .plugin-row {
   display: flex;
+  flex-wrap: wrap;
+  /* A row stretched by its neighbour's error line keeps its content at the
+     top, level with the neighbour, rather than drifting to the middle. */
+  align-content: flex-start;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* Why a connect failed, under the row that failed (PluginsModal). Wraps in
+   full: the reason is the only thing that tells the user what to do next. */
+.plugin-error {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+  padding-inline-start: 8px;
+  color: var(--status-err);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .plugin-open {

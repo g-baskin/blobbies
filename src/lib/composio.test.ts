@@ -148,6 +148,19 @@ describe("startComposioLink", () => {
     await expect(startComposioLink("nope")).rejects.toThrow(/did not return a link/);
   });
 
+  it("says why, in Composio's words, when no link came back", async () => {
+    // The bug this covers: every failed connect read the same generic line,
+    // so "Connect did nothing" was all the user could ever report.
+    reply.text = JSON.stringify({
+      successful: false,
+      data: { results: { gmail: { status: "failed", message: "Auth config not found" } } },
+      error: "1 connection failed",
+    });
+    await expect(startComposioLink("gmail")).rejects.toThrow(
+      "Composio did not return a link to open: Auth config not found 1 connection failed",
+    );
+  });
+
   it("never returns a non-https link", async () => {
     // The result is handed straight to the OS opener, so a javascript: or
     // file: URL smuggled into the reply must not reach it.
